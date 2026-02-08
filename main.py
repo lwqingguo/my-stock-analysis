@@ -5,100 +5,122 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # 页面配置
-st.set_page_config(page_title="全维度股票透视系统", layout="wide")
-st.title("🛡️ 全维度财务综合分析与趋势平台")
+st.set_page_config(page_title="十年多维财务透视系统", layout="wide")
+st.title("🏛️ 十年多维财务深度透视与趋势平台")
 
 # 侧边栏
-st.sidebar.header("分析配置")
-symbol = st.sidebar.text_input("股票代码 (美股:AAPL, A股:600519.SS)", "AAPL").upper()
+st.sidebar.header("分析控制台")
+symbol = st.sidebar.text_input("股票代码 (如: AAPL, MSFT, 600519.SS)", "AAPL").upper()
+year_range = st.sidebar.slider("分析年限", 5, 10, 10)
 
-def get_pro_analysis(ticker):
+def expert_analysis(ticker, years):
     try:
         stock = yf.Ticker(ticker)
-        # 获取报表 (注意：这里使用了兼容性更好的新版接口)
+        # 获取年度报表 (yfinance通常支持近4-10年数据)
         is_stmt = stock.income_stmt
         bs_stmt = stock.balance_sheet
         cf_stmt = stock.cashflow
-        info = stock.info
-
+        
         if is_stmt.empty:
-            st.error("无法获取财务报表。提示：美股AAPL，沪市600519.SS，深市000001.SZ")
+            st.error("无法获取报表。请确认代码正确（美股直接输入代码，A股需后缀 .SS 或 .SZ）。")
             return
 
-        # --- 核心指标看板 ---
-        st.header(f"📊 {info.get('longName', ticker)} 核心透视")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("ROE (净资产收益率)", f"{info.get('returnOnEquity', 0)*100:.2f}%")
-        m2.metric("净利率", f"{info.get('netIncomeToCommon', 0)/info.get('totalRevenue', 1)*100:.2f}%")
-        m3.metric("资产负债率", f"{info.get('debtToEquity', 0):.2f}%")
-        m4.metric("总资产周转率", f"{info.get('totalRevenue', 0)/info.get('totalAssets', 1):.2f}")
+        # 1. 实时基本面看板
+        info = stock.info
+        st.header(f"📊 {info.get('longName', ticker)} 实时画像")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("市盈率 PE(TTM)", f"{info.get('trailingPE', 'N/A')}")
+        c2.metric("市净率 PB", f"{info.get('priceToBook', 'N/A')}")
+        c3.metric("总市值", f"${info.get('marketCap', 0)/1e9:.2f}B")
+        c4.metric("五年平均ROE", f"{info.get('returnOnEquity', 0)*100:.2f}%")
 
-        # --- 维度一：盈利与成长 (多维度趋势) ---
-        st.subheader("1️⃣ 盈利能力与规模增长 (5年趋势)")
-        # 整理数据
-        rev = is_stmt.loc['Total Revenue'].sort_index()
-        net = is_stmt.loc['Net Income'].sort_index()
+        # --- 维度一：盈利能力 (含杜邦拆解指标) ---
+        st.divider()
+        st.subheader(f"💎 盈利性维度 ({years}年趋势)")
+        # 整理数据 (取前n年)
+        rev = is_stmt.loc['Total Revenue'].sort_index().tail(years)
+        net = is_stmt.loc['Net Income'].sort_index().tail(years)
+        gp = is_stmt.loc['Gross Profit'].sort_index().tail(years)
         
         fig1 = make_subplots(specs=[[{"secondary_y": True}]])
-        fig1.add_trace(go.Bar(x=rev.index, y=rev, name="总营收"), secondary_y=False)
-        fig1.add_trace(go.Scatter(x=net.index, y=net, name="净利润", line=dict(color='red', width=3)), secondary_y=True)
-        fig1.update_layout(title="营收与利润增长同步性分析")
+        fig1.add_trace(go.Bar(x=rev.index, y=rev, name="营收规模", marker_color='lightblue'))
+        fig1.add_trace(go.Scatter(x=rev.index, y=(net/rev)*100, name="净利率 %", line=dict(color='orange')), secondary_y=True)
+        fig1.add_trace(go.Scatter(x=rev.index, y=(gp/rev)*100, name="毛利率 %", line=dict(color='red', dash='dot')), secondary_y=True)
+        fig1.update_layout(title="盈利规模与利润率变动趋势")
         st.plotly_chart(fig1, use_container_width=True)
+        
+        st.caption("**其他关键指标：** 销售费用率、管理费用率、研发投入占比 (R&D Ratio)")
 
-        # --- 维度二：现金流质量 (真金白银分析) ---
-        st.subheader("2️⃣ 现金流结构与盈利含金量")
-        ocf = cf_stmt.loc['Operating Cash Flow'].sort_index()
-        capex = cf_stmt.loc['Capital Expenditure'].sort_index()
+        # --- 维度二：现金流健康度 (含收现比) ---
+        st.subheader("💰 现金流维度 (质量与收现比)")
+        ocf = cf_stmt.loc['Operating Cash Flow'].sort_index().tail(years)
+        capex = cf_stmt.loc['Capital Expenditure'].sort_index().tail(years)
         fcf = ocf + capex
         
         fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(x=net.index, y=net, name="账面利润", fill='tonexty'))
-        fig2.add_trace(go.Scatter(x=ocf.index, y=ocf, name="经营现金流", line=dict(dash='dot')))
-        fig2.add_trace(go.Bar(x=fcf.index, y=fcf, name="自由现金流 (FCF)"))
-        fig2.update_layout(title="利润 vs 现金流 (判断利润是否有水分)")
+        fig2.add_trace(go.Bar(x=ocf.index, y=ocf, name="经营现金流"))
+        fig2.add_trace(go.Scatter(x=ocf.index, y=fcf, name="自由现金流 (FCF)", fill='tonexty'))
+        fig2.add_trace(go.Scatter(x=ocf.index, y=(ocf/rev)*100, name="收现比 % (OCF/Revenue)", line=dict(color='purple', width=3)))
+        fig2.update_layout(title="现金流生成能力与收现比趋势")
         st.plotly_chart(fig2, use_container_width=True)
 
-        # --- 维度三：营运能力与资产效率 ---
-        st.subheader("3️⃣ 营运能力指标趋势")
-        c1, c2 = st.columns(2)
-        with c1:
-            # 杜邦分析核心：资产效率
-            assets = bs_stmt.loc['Total Assets'].sort_index()
-            asset_turnover = rev / assets
-            st.write("**总资产周转率趋势**")
-            st.line_chart(asset_turnover)
-        with c2:
-            # 毛利率走势
-            gp = is_stmt.loc['Gross Profit'].sort_index()
-            g_margin = (gp / rev) * 100
-            st.write("**产品毛利率趋势 (%)**")
-            st.area_chart(g_margin)
+        # --- 维度三：营运能力与周转效率 ---
+        st.subheader("⚙️ 营运效率维度")
+        # 增加应收账款周转天数 (简化计算)
+        try:
+            receivables = bs_stmt.loc['Net Receivables'].sort_index().tail(years)
+            turnover_days = (receivables / rev) * 365
+            st.write("**应收账款周转天数 (DSO) 趋势**")
+            st.line_chart(turnover_days)
+            st.caption("天数越短，代表公司回款能力越强，坏账风险越低。")
+        except:
+            st.info("该股票应收账款数据缺失。")
 
-        # --- 维度四：综合五角雷达图 (终极综合分析) ---
-        st.markdown("---")
-        st.subheader("🎯 综合基本面雷达图 (全维度体检)")
+        # --- 维度四：资产安全性与破产预警 ---
+        st.subheader("🛡️ 偿债与安全性维度")
+        assets = bs_stmt.loc['Total Assets'].sort_index().tail(years)
+        liab = bs_stmt.loc['Total Liabilities Net Minority Interest'].sort_index().tail(years)
+        current_assets = bs_stmt.loc['Current Assets'].sort_index().tail(years)
+        current_liab = bs_stmt.loc['Current Liabilities'].sort_index().tail(years)
         
-        # 简单的评分逻辑映射到 0-100
-        score_roe = min(info.get('returnOnEquity', 0) * 400, 100) # ROE 25%满分
-        score_margin = min((info.get('netIncomeToCommon', 0)/info.get('totalRevenue', 1)) * 400, 100)
-        score_cash = 100 if ocf.iloc[-1] > net.iloc[-1] else 50
-        score_safety = max(100 - info.get('debtToEquity', 100), 0)
-        score_growth = 100 if net.iloc[-1] > net.iloc[0] else 30
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            st.write("**资产负债率趋势 (%)**")
+            st.area_chart((liab/assets)*100)
+        with col_s2:
+            st.write("**流动比率 (Current Ratio)**")
+            st.line_chart(current_assets/current_liab)
+            st.caption("标准通常 > 1.5 为安全。")
 
-        categories = ['盈利能力(ROE)', '产品利润率', '现金流质量', '财务安全性', '历史成长性']
+        # --- 维度五：终极综合评分雷达图 ---
+        st.divider()
+        st.subheader("🏁 综合体检雷达图")
+        
+        # 指标标准化打分 (0-100)
+        # 1. 盈利能力 (ROE)
+        s_roe = min(info.get('returnOnEquity', 0) * 400, 100)
+        # 2. 现金流 (收现比)
+        s_cash = min((ocf.iloc[-1]/rev.iloc[-1]) * 400, 100) if rev.iloc[-1] !=0 else 0
+        # 3. 成长性 (五年营收增长)
+        s_growth = 100 if rev.iloc[-1] > rev.iloc[0] else 30
+        # 4. 安全性 (负债率反转)
+        s_safety = max(100 - (liab.iloc[-1]/assets.iloc[-1]*100), 0)
+        # 5. 营运效率 (周转率)
+        s_eff = min((rev.iloc[-1]/assets.iloc[-1]) * 100, 100)
+
+        categories = ['盈利能力', '现金流质量', '营收成长性', '资产安全性', '营运效率']
         fig_radar = go.Figure()
         fig_radar.add_trace(go.Scatterpolar(
-            r=[score_roe, score_margin, score_cash, score_safety, score_growth],
+            r=[s_roe, s_cash, s_growth, s_safety, s_eff],
             theta=categories,
             fill='toself',
-            name='综合评分'
+            marker=dict(color='gold')
         ))
         fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])))
         st.plotly_chart(fig_radar)
 
     except Exception as e:
-        st.error(f"分析失败，由于: {e}")
-        st.info("提示：请确保安装了最新版 yfinance (pip install yfinance --upgrade)")
+        st.error(f"分析失败: {e}")
 
-if st.sidebar.button("生成全维度深度分析"):
-    get_pro_analysis(symbol)
+if st.sidebar.button("生成十年深度透视"):
+    expert_analysis(symbol, year_range)
