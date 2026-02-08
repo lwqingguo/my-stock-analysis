@@ -3,112 +3,94 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 
-# 1. 网页基础配置
-st.set_page_config(page_title="综合价值分析平台", layout="wide")
+# 1. 页面设置
+st.set_page_config(page_title="高级价值分析系统", layout="wide")
 st.title("💎 全球股票综合价值分析平台")
 st.markdown("---")
 
-# 2. 侧边栏控制器
-st.sidebar.header("控制台")
+# 2. 侧边栏
+st.sidebar.header("配置中心")
 symbol = st.sidebar.text_input("代码 (例: NVDA, AAPL, 600519.SS)", "NVDA").upper()
-analyze_btn = st.sidebar.button("开始全维度分析")
+btn = st.sidebar.button("生成深度体检报告")
 
-# 3. 核心分析函数
-def full_analysis(ticker):
+def safe_get(df, index_name):
+    """安全获取数据的辅助函数"""
     try:
-        stock = yf.Ticker(ticker)
-        # 获取三大报表
-        annual_is = stock.annual_income_stmt
-        annual_cf = stock.annual_cashflow
-        annual_bs = stock.annual_balance_sheet
-        info = stock.info
+        return df.loc[index_name]
+    except:
+        return None
 
-        if annual_is.empty:
-            st.error("无法获取财务报表，请检查代码后缀是否正确。")
-            return
-
-        # --- 第一部分：实时画像 ---
-        st.header(f"🏢 {info.get('longName', ticker)}")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("当前股价", f"${info.get('currentPrice', 'N/A')}")
-        c2.metric("市盈率 (PE)", info.get('trailingPE', 'N/A'))
-        c3.metric("总市值", f"${info.get('marketCap', 0)/1e9:.2f}B")
-        c4.metric("股息率", f"{info.get('dividendYield', 0)*100:.2f}%")
-
-        # --- 第二部分：五年趋势对比 ---
-        st.subheader("📈 核心财务指标五年趋势")
-        
-        # 数据整理
-        dates = annual_is.columns
-        net_income = annual_is.loc['Net Income'].sort_index()
-        ocf = annual_cf.loc['Operating Cash Flow'].sort_index()
-        capex = annual_cf.loc['Capital Expenditure'].sort_index()
-        fcf = ocf + capex
-        
-        # 绘制利润与现金流对比图
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=net_income.index, y=net_income, name='净利润', line=dict(color='blue', width=4)))
-        fig.add_trace(go.Scatter(x=fcf.index, y=fcf, name='自由现金流', line=dict(color='green', dash='dash')))
-        fig.update_layout(title="利润 vs 现金流 (验证盈利真实性)", hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
-
-        # --- 第三部分：深度营运指标 ---
-        st.subheader("🧩 营运效率与盈利质量")
-        col_a, col_b = st.columns(2)
-        
-        with col_a:
-            # ROE 趋势
-            equity = annual_bs.loc['Stockholders Equity'].sort_index()
-            roe = (net_income / equity) * 100
-            st.write("**ROE (净资产收益率) 趋势 %**")
-            st.line_chart(roe)
+if btn:
+    with st.spinner('正在同步全球金融数据库...'):
+        try:
+            stock = yf.Ticker(symbol)
             
-        with col_b:
-            # 负债率趋势
-            total_assets = annual_bs.loc['Total Assets'].sort_index()
-            total_liab = annual_bs.loc['Total Liabilities Net Minority Interest'].sort_index()
-            debt_ratio = (total_liab / total_assets) * 100
-            st.write("**资产负债率 % 趋势**")
-            st.area_chart(debt_ratio)
+            # 使用最新标准的属性名
+            is_stmt = stock.income_stmt    # 损益表
+            cf_stmt = stock.cashflow       # 现金流表
+            bs_stmt = stock.balance_sheet  # 资产负债表
+            info = stock.info
 
-        # --- 第四部分：综合评估打分 (你的最终目标) ---
-        st.markdown("---")
-        st.subheader("🏆 智能综合价值评分")
-        score = 0
-        checks = []
+            if is_stmt.empty:
+                st.error("暂无财务报表数据，请尝试其他代码。")
+            else:
+                # --- 仪表盘 ---
+                st.header(f"📊 {info.get('longName', symbol)} 实时概况")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("当前股价", f"${info.get('currentPrice', 'N/A')}")
+                c2.metric("市盈率(PE)", info.get('trailingPE', 'N/A'))
+                c3.metric("总市值", f"${info.get('marketCap', 0)/1e9:.2f}B")
+                c4.metric("股息率", f"{info.get('dividendYield', 0)*100:.2f}%")
 
-        # 评分逻辑
-        # 1. 现金流健康度
-        if fcf.iloc[-1] > 0:
-            score += 25
-            checks.append("✅ 自由现金流为正 (25分)")
-        # 2. 利润含金量
-        if ocf.iloc[-1] > net_income.iloc[-1]:
-            score += 25
-            checks.append("✅ 利润含金量高：现金流 > 利润 (25分)")
-        # 3. 盈利能力
-        if roe.iloc[-1] > 15:
-            score += 25
-            checks.append("✅ ROE > 15%，具备超强盈利能力 (25分)")
-        # 4. 负债安全性
-        if debt_ratio.iloc[-1] < 60:
-            score += 25
-            checks.append("✅ 资产负债率低于 60%，财务稳健 (25分)")
+                # --- 趋势分析 ---
+                st.subheader("📈 核心盈利与现金流趋势 (5年)")
+                
+                # 统一日期索引
+                ni = is_stmt.loc['Net Income'].sort_index()
+                ocf = cf_stmt.loc['Operating Cash Flow'].sort_index()
+                
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=ni.index, y=ni, name='净利润', line=dict(color='#1f77b4', width=3)))
+                fig.add_trace(go.Scatter(x=ocf.index, y=ocf, name='经营现金流', line=dict(color='#2ca02c', dash='dot')))
+                fig.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02))
+                st.plotly_chart(fig, use_container_width=True)
 
-        # 显示总得分
-        st.info(f"### 综合得分：{score} / 100")
-        for c in checks:
-            st.write(c)
-        
-        if score >= 75:
-            st.success("🌟 结论：优质品种，财务指标非常健康！")
-        elif score >= 50:
-            st.warning("⚖️ 结论：基本面尚可，建议关注负债或现金流变化。")
-        else:
-            st.error("🚨 结论：存在重大财务隐患，请谨慎投资。")
+                # --- 营运效率 ---
+                st.subheader("🧩 盈利能力与杠杆监控")
+                ca, cb = st.columns(2)
+                with ca:
+                    # ROE 计算
+                    equity = bs_stmt.loc['Stockholders Equity'].sort_index()
+                    roe = (ni / equity) * 100
+                    st.write("**ROE (净资产收益率) %**")
+                    st.line_chart(roe)
+                with cb:
+                    # 负债率
+                    assets = bs_stmt.loc['Total Assets'].sort_index()
+                    liab = bs_stmt.loc['Total Liabilities Net Minority Interest'].sort_index()
+                    debt_ratio = (liab / assets) * 100
+                    st.write("**资产负债率 %**")
+                    st.area_chart(debt_ratio)
 
-    except Exception as e:
-        st.error(f"分析出错: {e}")
+                # --- 智能评分系统 ---
+                st.markdown("---")
+                st.subheader("🎯 智能投资评估结论")
+                score = 0
+                tips = []
+                
+                # 逻辑判断
+                if ocf.iloc[-1] > ni.iloc[-1]:
+                    score += 40
+                    tips.append("✅ 盈利含金量极高：经营现金流 > 净利润")
+                if roe.iloc[-1] > 15:
+                    score += 30
+                    tips.append("✅ 盈利效率优秀：ROE 超过 15%")
+                if debt_ratio.iloc[-1] < 50:
+                    score += 30
+                    tips.append("✅ 财务防线稳固：负债率低于 50%")
+                
+                st.info(f"### 综合健康得分：{score} / 100")
+                for t in tips: st.write(t)
 
-if analyze_btn:
-    full_analysis(symbol)
+        except Exception as e:
+            st.error(f"分析出错：{str(e)}")
