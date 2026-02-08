@@ -2,63 +2,85 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-# 网页配置
-st.set_page_config(page_title="智能股票体检中心", layout="wide")
+# 设置页面
+st.set_page_config(page_title="高级财务分析系统", layout="wide")
+st.title("🛡️ 综合股票价值评估平台 (专业版)")
 
-st.title("📈 个人股票综合分析平台")
-st.markdown("---")
+# 侧边栏
+st.sidebar.header("数据控制台")
+symbol = st.sidebar.text_input("输入代码 (例: AAPL, 600519.SS)", "AAPL").upper()
 
-# 侧边栏设置
-st.sidebar.header("配置参数")
-symbol = st.sidebar.text_input("请输入股票代码 (美股如 AAPL, A股如 600519.SS)", "AAPL").upper()
+def analyze_stock(ticker):
+    try:
+        stock = yf.Ticker(ticker)
+        # 获取三大报表
+        is_stmt = stock.income_stmt        # 损益表
+        bs_stmt = stock.balance_sheet     # 资产负债表
+        cf_stmt = stock.cashflow          # 现金流量表
+        info = stock.info
 
-if st.sidebar.button("开始全面体检"):
-    with st.spinner('正在调取全球金融数据...'):
-        try:
-            stock = yf.Ticker(symbol)
-            
-            # 获取数据
-            info = stock.info
-            df_cf = stock.cashflow
-            df_is = stock.income_stmt
-            
-            # 基础信息
-            st.header(f"{info.get('longName', symbol)} - 实时概况")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("当前股价", f"${info.get('currentPrice', 'N/A')}")
-            col2.metric("市盈率 (PE)", info.get('trailingPE', 'N/A'))
-            col3.metric("市值", f"{info.get('marketCap', 0)/1e9:.2f}B")
-            col4.metric("股息率", f"{info.get('dividendYield', 0)*100:.2f}%" if info.get('dividendYield') else "0%")
+        # --- 1. 核心看板 ---
+        st.header(f"📊 {info.get('longName', ticker)} 财务画像")
+        cols = st.columns(4)
+        cols[0].metric("ROE (净资产收益率)", f"{info.get('returnOnEquity', 0)*100:.2f}%")
+        cols[1].metric("毛利率", f"{info.get('grossMargins', 0)*100:.2f}%")
+        cols[2].metric("市盈率 (PE)", f"{info.get('trailingPE', 'N/A')}")
+        cols[3].metric("总资产负债率", f"{info.get('debtToEquity', 0):.2f}")
 
-            # 核心逻辑：现金为王体检
-            st.subheader("🔍 核心指标深度体检")
-            
-            # 提取最近一年数据
-            ocf = df_cf.loc['Operating Cash Flow'].iloc[0]
-            cap_ex = df_cf.loc['Capital Expenditure'].iloc[0]
-            net_income = df_is.loc['Net Income'].iloc[0]
-            fcf = ocf + cap_ex # 自由现金流
+        # --- 2. 现金流与利润含金量分析 ---
+        st.subheader("🔗 现金流与盈利深度对比")
+        # 提取最新两年的净利润和经营现金流
+        net_income = is_stmt.loc['Net Income']
+        ocf = cf_stmt.loc['Operating Cash Flow']
+        
+        comparison_df = pd.DataFrame({
+            '净利润': net_income,
+            '经营现金流': ocf
+        })
+        st.bar_chart(comparison_df)
 
-            c1, c2 = st.columns(2)
-            with c1:
-                st.write("**1. 自由现金流 (FCF) 状况**")
-                if fcf > 0:
-                    st.success(f"✅ 自由现金流为正: ${fcf/1e9:.2f}B。公司有闲钱发分红或回购。")
-                else:
-                    st.error(f"❌ 自由现金流为负: ${fcf/1e9:.2f}B。公司正在失血，风险较大。")
-            
-            with c2:
-                st.write("**2. 利润含金量 (现金/净利)**")
-                ratio = ocf / net_income
-                if ratio > 1:
-                    st.success(f"✅ 含金量: {ratio:.2f}。赚的都是真金白银，财务质量高。")
-                else:
-                    st.warning(f"⚠️ 含金量: {ratio:.2f}。账面富贵，现金回收较慢。")
+        # --- 3. 智能评分逻辑 (你的目标核心) ---
+        st.subheader("🏆 综合投资价值评分")
+        score = 0
+        reasons = []
 
-        except Exception as e:
-            st.error(f"获取数据失败：{e}")
-            st.info("提示：A股请记得加后缀，如茅台是 600519.SS，腾讯是 0700.HK")
+        # 评分标准 A: 现金流
+        fcf = ocf.iloc[0] + cf_stmt.loc['Capital Expenditure'].iloc[0]
+        if fcf > 0:
+            score += 30
+            reasons.append("✅ 自由现金流为正 (30分)")
+        
+        # 评分标准 B: ROE
+        roe = info.get('returnOnEquity', 0)
+        if roe > 0.15:
+            score += 30
+            reasons.append("✅ ROE 大于 15%，盈利能力强 (30分)")
+        
+        # 评分标准 C: 负债率
+        debt_ratio = info.get('debtToEquity', 200) # 默认设高
+        if debt_ratio < 100:
+            score += 20
+            reasons.append("✅ 负债水平健康 (20分)")
 
-st.sidebar.markdown("---")
-st.sidebar.caption("小白专属分析工具 v1.0")
+        # 评分标准 D: 利润含金量
+        if ocf.iloc[0] > net_income.iloc[0]:
+            score += 20
+            reasons.append("✅ 利润含金量高：现金 > 利润 (20分)")
+
+        # 显示总分
+        st.info(f"### 最终得分：{score} / 100")
+        for r in reasons:
+            st.write(r)
+
+        if score >= 80:
+            st.success("🌟 结论：该公司财务表现极佳，极具研究价值！")
+        elif score >= 50:
+            st.warning("⚖️ 结论：财务状况中等，建议结合行业趋势观察。")
+        else:
+            st.error("🚨 结论：多项财务指标异常，需谨慎对待。")
+
+    except Exception as e:
+        st.error(f"分析失败，原因：{e}")
+
+if st.sidebar.button("一键生成深度分析"):
+    analyze_stock(symbol)
