@@ -1,86 +1,85 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import plotly.graph_objects as go
 
-# 设置页面
-st.set_page_config(page_title="高级财务分析系统", layout="wide")
-st.title("🛡️ 综合股票价值评估平台 (专业版)")
+# 页面配置
+st.set_page_config(page_title="高级财务趋势分析系统", layout="wide")
+st.title("📈 股票历史趋势深度对比平台")
 
 # 侧边栏
 st.sidebar.header("数据控制台")
-symbol = st.sidebar.text_input("输入代码 (例: AAPL, 600519.SS)", "AAPL").upper()
+symbol = st.sidebar.text_input("输入代码 (例: AAPL, NVDA, 600519.SS)", "AAPL").upper()
 
-def analyze_stock(ticker):
+def get_trend_analysis(ticker):
     try:
         stock = yf.Ticker(ticker)
-        # 获取三大报表
-        is_stmt = stock.income_stmt        # 损益表
-        bs_stmt = stock.balance_sheet     # 资产负债表
-        cf_stmt = stock.cashflow          # 现金流量表
+        
+        # 获取年度损益表和现金流量表 (通常包含最近4-5年)
+        annual_is = stock.annual_income_stmt
+        annual_cf = stock.annual_cashflow
+        annual_bs = stock.annual_balance_sheet
         info = stock.info
 
-        # --- 1. 核心看板 ---
-        st.header(f"📊 {info.get('longName', ticker)} 财务画像")
-        cols = st.columns(4)
-        cols[0].metric("ROE (净资产收益率)", f"{info.get('returnOnEquity', 0)*100:.2f}%")
-        cols[1].metric("毛利率", f"{info.get('grossMargins', 0)*100:.2f}%")
-        cols[2].metric("市盈率 (PE)", f"{info.get('trailingPE', 'N/A')}")
-        cols[3].metric("总资产负债率", f"{info.get('debtToEquity', 0):.2f}")
+        st.header(f"核心指标五年趋势：{info.get('longName', ticker)}")
 
-        # --- 2. 现金流与利润含金量分析 ---
-        st.subheader("🔗 现金流与盈利深度对比")
-        # 提取最新两年的净利润和经营现金流
-        net_income = is_stmt.loc['Net Income']
-        ocf = cf_stmt.loc['Operating Cash Flow']
-        
-        comparison_df = pd.DataFrame({
-            '净利润': net_income,
-            '经营现金流': ocf
+        # --- 1. 数据清洗与整理 ---
+        # 提取净利润趋势
+        net_income_trend = annual_is.loc['Net Income'].sort_index()
+        # 提取经营现金流趋势
+        ocf_trend = annual_cf.loc['Operating Cash Flow'].sort_index()
+        # 计算自由现金流趋势 (OCF + CapEx)
+        capex_trend = annual_cf.loc['Capital Expenditure'].sort_index()
+        fcf_trend = ocf_trend + capex_trend
+
+        # --- 2. 趋势图表展示 ---
+        st.subheader("💰 盈利与现金流增长趋势")
+        trend_data = pd.DataFrame({
+            '净利润': net_income_trend,
+            '自由现金流 (FCF)': fcf_trend
         })
-        st.bar_chart(comparison_df)
+        # 使用折线图清晰展示趋势
+        st.line_chart(trend_data)
 
-        # --- 3. 智能评分逻辑 (你的目标核心) ---
-        st.subheader("🏆 综合投资价值评分")
-        score = 0
-        reasons = []
+        # --- 3. ROE 深度挖掘 ---
+        st.subheader("🎯 股东权益报酬率 (ROE) 趋势")
+        try:
+            # ROE = 净利润 / 股东权益
+            equity = annual_bs.loc['Stockholders Equity'].sort_index()
+            roe_trend = (net_income_trend / equity) * 100
+            
+            fig_roe = go.Figure()
+            fig_roe.add_trace(go.Scatter(x=roe_trend.index, y=roe_trend.values, mode='lines+markers', name='ROE %'))
+            fig_roe.update_layout(yaxis_title="百分比 (%)", hovermode="x unified")
+            st.plotly_chart(fig_roe, use_container_width=True)
+            
+            # 趋势解读
+            latest_roe = roe_trend.iloc[-1]
+            prev_roe = roe_trend.iloc[-2]
+            if latest_roe > prev_roe:
+                st.success(f"📈 ROE 正在改善：从 {prev_roe:.2f}% 提升至 {latest_roe:.2f}%")
+            else:
+                st.warning(f"📉 ROE 出现下滑：从 {prev_roe:.2f}% 降至 {latest_roe:.2f}%，需警惕盈利效率下降。")
+        except:
+            st.info("该股票暂无足够的历史资产数据计算 ROE 趋势。")
 
-        # 评分标准 A: 现金流
-        fcf = ocf.iloc[0] + cf_stmt.loc['Capital Expenditure'].iloc[0]
-        if fcf > 0:
-            score += 30
-            reasons.append("✅ 自由现金流为正 (30分)")
+        # --- 4. 营运指标看板 ---
+        st.subheader("🧱 资产结构健康度")
+        col1, col2 = st.columns(2)
+        with col1:
+            # 毛利率趋势
+            gross_margin_trend = (annual_is.loc['Gross Profit'] / annual_is.loc['Total Revenue']) * 100
+            st.write("**毛利率 (%) 趋势**")
+            st.area_chart(gross_margin_trend.sort_index())
         
-        # 评分标准 B: ROE
-        roe = info.get('returnOnEquity', 0)
-        if roe > 0.15:
-            score += 30
-            reasons.append("✅ ROE 大于 15%，盈利能力强 (30分)")
-        
-        # 评分标准 C: 负债率
-        debt_ratio = info.get('debtToEquity', 200) # 默认设高
-        if debt_ratio < 100:
-            score += 20
-            reasons.append("✅ 负债水平健康 (20分)")
-
-        # 评分标准 D: 利润含金量
-        if ocf.iloc[0] > net_income.iloc[0]:
-            score += 20
-            reasons.append("✅ 利润含金量高：现金 > 利润 (20分)")
-
-        # 显示总分
-        st.info(f"### 最终得分：{score} / 100")
-        for r in reasons:
-            st.write(r)
-
-        if score >= 80:
-            st.success("🌟 结论：该公司财务表现极佳，极具研究价值！")
-        elif score >= 50:
-            st.warning("⚖️ 结论：财务状况中等，建议结合行业趋势观察。")
-        else:
-            st.error("🚨 结论：多项财务指标异常，需谨慎对待。")
+        with col2:
+            # 负债率趋势
+            debt_trend = (annual_bs.loc['Total Liabilities Net Minority Interest'] / annual_bs.loc['Total Assets']) * 100
+            st.write("**资产负债率 (%) 趋势**")
+            st.line_chart(debt_trend.sort_index())
 
     except Exception as e:
-        st.error(f"分析失败，原因：{e}")
+        st.error(f"分析失败: {e}")
 
-if st.sidebar.button("一键生成深度分析"):
-    analyze_stock(symbol)
+if st.sidebar.button("生成五年趋势报告"):
+    get_trend_analysis(symbol)
