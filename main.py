@@ -5,122 +5,86 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # 页面配置
-st.set_page_config(page_title="十年多维财务透视系统", layout="wide")
-st.title("🏛️ 十年多维财务深度透视与趋势平台")
+st.set_page_config(page_title="十年深度财务透视", layout="wide")
+st.title("🏛️ 十年多维财务分析平台 (专业增强版)")
 
 # 侧边栏
-st.sidebar.header("分析控制台")
-symbol = st.sidebar.text_input("股票代码 (如: AAPL, MSFT, 600519.SS)", "AAPL").upper()
-year_range = st.sidebar.slider("分析年限", 5, 10, 10)
+st.sidebar.header("数据控制台")
+symbol = st.sidebar.text_input("股票代码 (如: AAPL, 600519.SS)", "AAPL").upper()
 
-def expert_analysis(ticker, years):
+def analysis_v3(ticker):
     try:
         stock = yf.Ticker(ticker)
-        # 获取年度报表 (yfinance通常支持近4-10年数据)
-        is_stmt = stock.income_stmt
-        bs_stmt = stock.balance_sheet
-        cf_stmt = stock.cashflow
+        # 显式抓取年度报表
+        is_stmt = stock.income_stmt  # 损益表
+        cf_stmt = stock.cashflow     # 现金流表
+        bs_stmt = stock.balance_sheet  # 资产负债表
         
         if is_stmt.empty:
-            st.error("无法获取报表。请确认代码正确（美股直接输入代码，A股需后缀 .SS 或 .SZ）。")
+            st.error("无法获取报表数据，请检查网络或代码后缀。")
             return
 
-        # 1. 实时基本面看板
-        info = stock.info
-        st.header(f"📊 {info.get('longName', ticker)} 实时画像")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("市盈率 PE(TTM)", f"{info.get('trailingPE', 'N/A')}")
-        c2.metric("市净率 PB", f"{info.get('priceToBook', 'N/A')}")
-        c3.metric("总市值", f"${info.get('marketCap', 0)/1e9:.2f}B")
-        c4.metric("五年平均ROE", f"{info.get('returnOnEquity', 0)*100:.2f}%")
-
-        # --- 维度一：盈利能力 (含杜邦拆解指标) ---
-        st.divider()
-        st.subheader(f"💎 盈利性维度 ({years}年趋势)")
-        # 整理数据 (取前n年)
-        rev = is_stmt.loc['Total Revenue'].sort_index().tail(years)
-        net = is_stmt.loc['Net Income'].sort_index().tail(years)
-        gp = is_stmt.loc['Gross Profit'].sort_index().tail(years)
+        # 1. 营收与盈利性分析 (营收柱状图 + 营收增长率折线图)
+        st.header("1️⃣ 营收规模与成长速度")
+        # 整理数据并按年份正序排列
+        rev = is_stmt.loc['Total Revenue'].sort_index()
+        rev_growth = rev.pct_change() * 100  # 计算环比增长率
         
         fig1 = make_subplots(specs=[[{"secondary_y": True}]])
-        fig1.add_trace(go.Bar(x=rev.index, y=rev, name="营收规模", marker_color='lightblue'))
-        fig1.add_trace(go.Scatter(x=rev.index, y=(net/rev)*100, name="净利率 %", line=dict(color='orange')), secondary_y=True)
-        fig1.add_trace(go.Scatter(x=rev.index, y=(gp/rev)*100, name="毛利率 %", line=dict(color='red', dash='dot')), secondary_y=True)
-        fig1.update_layout(title="盈利规模与利润率变动趋势")
+        fig1.add_trace(go.Bar(x=rev.index, y=rev, name="营业收入 (柱状)", marker_color='#4169E1'), secondary_y=False)
+        fig1.add_trace(go.Scatter(x=rev.index, y=rev_growth, name="营收增长率 % (折线)", line=dict(color='#FF4500', width=3)), secondary_y=True)
+        fig1.update_layout(title="历年营收与增长率趋势 (Revenue & Growth Rate)", hovermode="x unified")
+        fig1.update_yaxes(title_text="营收规模", secondary_y=False)
+        fig1.update_yaxes(title_text="增长率 %", secondary_y=True)
         st.plotly_chart(fig1, use_container_width=True)
-        
-        st.caption("**其他关键指标：** 销售费用率、管理费用率、研发投入占比 (R&D Ratio)")
 
-        # --- 维度二：现金流健康度 (含收现比) ---
-        st.subheader("💰 现金流维度 (质量与收现比)")
-        ocf = cf_stmt.loc['Operating Cash Flow'].sort_index().tail(years)
-        capex = cf_stmt.loc['Capital Expenditure'].sort_index().tail(years)
-        fcf = ocf + capex
+        # 2. 利润率对比 (毛利率 + 净利率折线图)
+        st.header("2️⃣ 利润率趋势对比")
+        net_income = is_stmt.loc['Net Income'].sort_index()
+        gp = is_stmt.loc['Gross Profit'].sort_index()
+        
+        gross_margin = (gp / rev) * 100
+        net_margin = (net_income / rev) * 100
         
         fig2 = go.Figure()
-        fig2.add_trace(go.Bar(x=ocf.index, y=ocf, name="经营现金流"))
-        fig2.add_trace(go.Scatter(x=ocf.index, y=fcf, name="自由现金流 (FCF)", fill='tonexty'))
-        fig2.add_trace(go.Scatter(x=ocf.index, y=(ocf/rev)*100, name="收现比 % (OCF/Revenue)", line=dict(color='purple', width=3)))
-        fig2.update_layout(title="现金流生成能力与收现比趋势")
+        fig2.add_trace(go.Scatter(x=rev.index, y=gross_margin, name="毛利率 %", line=dict(color='#228B22', width=2), fill='tonexty'))
+        fig2.add_trace(go.Scatter(x=rev.index, y=net_margin, name="净利率 %", line=dict(color='#8B0000', width=3)))
+        fig2.update_layout(title="盈利质量：毛利与净利双线走势 (Margins Analysis)", hovermode="x unified")
         st.plotly_chart(fig2, use_container_width=True)
-
-        # --- 维度三：营运能力与周转效率 ---
-        st.subheader("⚙️ 营运效率维度")
-        # 增加应收账款周转天数 (简化计算)
-        try:
-            receivables = bs_stmt.loc['Net Receivables'].sort_index().tail(years)
-            turnover_days = (receivables / rev) * 365
-            st.write("**应收账款周转天数 (DSO) 趋势**")
-            st.line_chart(turnover_days)
-            st.caption("天数越短，代表公司回款能力越强，坏账风险越低。")
-        except:
-            st.info("该股票应收账款数据缺失。")
-
-        # --- 维度四：资产安全性与破产预警 ---
-        st.subheader("🛡️ 偿债与安全性维度")
-        assets = bs_stmt.loc['Total Assets'].sort_index().tail(years)
-        liab = bs_stmt.loc['Total Liabilities Net Minority Interest'].sort_index().tail(years)
-        current_assets = bs_stmt.loc['Current Assets'].sort_index().tail(years)
-        current_liab = bs_stmt.loc['Current Liabilities'].sort_index().tail(years)
         
-        col_s1, col_s2 = st.columns(2)
-        with col_s1:
-            st.write("**资产负债率趋势 (%)**")
-            st.area_chart((liab/assets)*100)
-        with col_s2:
-            st.write("**流动比率 (Current Ratio)**")
-            st.line_chart(current_assets/current_liab)
-            st.caption("标准通常 > 1.5 为安全。")
-
-        # --- 维度五：终极综合评分雷达图 ---
-        st.divider()
-        st.subheader("🏁 综合体检雷达图")
         
-        # 指标标准化打分 (0-100)
-        # 1. 盈利能力 (ROE)
-        s_roe = min(info.get('returnOnEquity', 0) * 400, 100)
-        # 2. 现金流 (收现比)
-        s_cash = min((ocf.iloc[-1]/rev.iloc[-1]) * 400, 100) if rev.iloc[-1] !=0 else 0
-        # 3. 成长性 (五年营收增长)
-        s_growth = 100 if rev.iloc[-1] > rev.iloc[0] else 30
-        # 4. 安全性 (负债率反转)
-        s_safety = max(100 - (liab.iloc[-1]/assets.iloc[-1]*100), 0)
-        # 5. 营运效率 (周转率)
-        s_eff = min((rev.iloc[-1]/assets.iloc[-1]) * 100, 100)
 
-        categories = ['盈利能力', '现金流质量', '营收成长性', '资产安全性', '营运效率']
-        fig_radar = go.Figure()
-        fig_radar.add_trace(go.Scatterpolar(
-            r=[s_roe, s_cash, s_growth, s_safety, s_eff],
-            theta=categories,
-            fill='toself',
-            marker=dict(color='gold')
-        ))
-        fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])))
-        st.plotly_chart(fig_radar)
+        # 3. 营运能力指标 (应收账款与周转效率)
+        st.header("3️⃣ 营运与周转能力")
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            try:
+                receivables = bs_stmt.loc['Net Receivables'].sort_index()
+                dso = (receivables / rev) * 365
+                st.write("**应收账款周转天数 (DSO)**")
+                st.line_chart(dso)
+            except: st.info("暂无应收账款数据")
+        with col_c2:
+            assets = bs_stmt.loc['Total Assets'].sort_index()
+            turnover = rev / assets
+            st.write("**总资产周转率**")
+            st.area_chart(turnover)
+
+        # 4. 现金流深度体检 (收现比与 FCF)
+        st.header("4️⃣ 现金流健康度")
+        ocf = cf_stmt.loc['Operating Cash Flow'].sort_index()
+        capex = cf_stmt.loc['Capital Expenditure'].sort_index()
+        fcf = ocf + capex
+        
+        fig4 = go.Figure()
+        fig4.add_trace(go.Bar(x=rev.index, y=ocf, name="经营现金流"))
+        fig4.add_trace(go.Bar(x=rev.index, y=fcf, name="自由现金流"))
+        fig4.add_trace(go.Scatter(x=rev.index, y=(ocf/rev)*100, name="收现比 %", line=dict(color='purple')))
+        fig4.update_layout(title="经营现金流、自由现金流与收现比趋势")
+        st.plotly_chart(fig4, use_container_width=True)
 
     except Exception as e:
         st.error(f"分析失败: {e}")
 
-if st.sidebar.button("生成十年深度透视"):
-    expert_analysis(symbol, year_range)
+if st.sidebar.button("生成十年全维度报告"):
+    analysis_v3(symbol)
