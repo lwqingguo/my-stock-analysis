@@ -143,15 +143,57 @@ def expert_system_v10(ticker):
         mk1.metric("盈利含金量 (OCF/NI)", f"{ocf.iloc[-1]/net_income.iloc[-1]:.2f}")
         mk2.metric("FCF转换率 (FCF/NI)", f"{fcf.iloc[-1]/net_income.iloc[-1]:.2f}")
 
-        # --- 6. 财务安全 ---
-        st.header("5️⃣ 财务安全性 (Safety)")
+       # --- 6. 财务安全性 (Safety & Solvency 深度增强) ---
+        st.header("5️⃣ 财务安全性与偿债能力 (Safety)")
+        
+        # 数据准备
         assets = get_data_safe(bs_stmt, ['Total Assets'])
         liab = get_data_safe(bs_stmt, ['Total Liabilities Net Minority Interest', 'Total Liabilities'])
-        st.write("**资产负债率趋势 (%)**")
-        st.line_chart((liab/assets)*100)
+        equity = get_data_safe(bs_stmt, ['Stockholders Equity'])
+        current_assets = get_data_safe(bs_stmt, ['Total Current Assets', 'Current Assets'])
+        current_liab = get_data_safe(bs_stmt, ['Total Current Liabilities', 'Current Liabilities'])
+        ebit = get_data_safe(is_stmt, ['EBIT'])
+        interest_expense = get_data_safe(is_stmt, ['Interest Expense'])
 
-    except Exception as e:
-        st.error(f"分析失败: {e}")
+        # 指标计算
+        debt_ratio = (liab / assets) * 100
+        current_ratio = current_assets / current_liab
+        equity_multiplier = assets / equity
+        # 利息保障倍数计算 (注意利息支出通常为负数，取绝对值)
+        interest_coverage = ebit / interest_expense.abs() if interest_expense.abs().mean() != 0 else pd.Series([None]*len(years))
 
-if st.sidebar.button("生成全维度十年报告"):
-    expert_system_v10(symbol)
+        # 布局：左侧显示趋势图，右侧显示关键数值
+        col_s1, col_s2 = st.columns([2, 1])
+        
+        with col_s1:
+            fig_safety = make_subplots(specs=[[{"secondary_y": True}]])
+            # 资产负债率折线
+            fig_safety.add_trace(go.Scatter(x=years_label, y=debt_ratio, name="资产负债率 %", line=dict(color='black', width=3)), secondary_y=False)
+            # 流动比率折线 (右轴)
+            fig_safety.add_trace(go.Scatter(x=years_label, y=current_ratio, name="流动比率 (倍)", line=dict(color='blue', dash='dash')), secondary_y=True)
+            
+            fig_safety.update_layout(title="长短期偿债能力趋势 (双轴)", hovermode="x unified")
+            fig_safety.update_yaxes(title_text="负债率 %", secondary_y=False)
+            fig_safety.update_yaxes(title_text="流动比率 (倍)", secondary_y=True)
+            st.plotly_chart(fig_safety, use_container_width=True)
+        
+        with col_s2:
+            st.write("**核心安全指标 (最新财年)**")
+            st.metric("权益乘数 (杠杆)", f"{equity_multiplier.iloc[-1]:.2f}", help="总资产/股东权益。数值越高杠杆越大。")
+            
+            ic_val = interest_coverage.iloc[-1]
+            if ic_val is not None:
+                st.metric("利息保障倍数", f"{ic_val:.2f}", delta="安全" if ic_val > 3 else "预警", delta_color="normal" if ic_val > 3 else "inverse")
+            else:
+                st.write("利息保障倍数: 数据缺失")
+            
+            st.metric("流动比率", f"{current_ratio.iloc[-1]:.2f}", help="> 2 通常被认为非常安全")
+
+        # 增加专家解读
+        st.info("""
+        💡 **专家解读：**
+        * **资产负债率**：看长期生存空间。重资产行业(如制造业)通常在50%-70%属于正常。
+        * **流动比率**：看短期生存能力。如果低于1，说明公司可能面临短期流动性危机，需要关注现金流。
+        * **利息保障倍数**：生存底线。如果低于1，说明利润已经不足以支付利息，债务违约风险极大。
+        * **权益乘数**：杜邦分析核心。如果负债率不高但权益乘数极高，说明公司极度依赖财务杠杆。
+        """)
