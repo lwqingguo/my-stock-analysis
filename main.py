@@ -185,6 +185,16 @@ def run_v27_engine(ticker):
     except Exception as e:
         st.error(f"分析失败: {e}")
 
+# 在总结部分增加一个小逻辑
+score = 0
+if roe.iloc[-1] > 20: score += 2
+if (ocf/ni).iloc[-1] > 1: score += 2
+if curr_ratio.iloc[-1] > 1.2: score += 2
+if c2c.iloc[-1] < 30: score += 2
+if (rev.pct_change().iloc[-1]) > 0.1: score += 2
+
+st.info(f"📊 财务综合健康评分：{score} / 10（基于盈利、质量、效率、安全、成长维度）")
+
 # --- 关键修正：确保按钮调用的函数名完全一致 ---
 if st.sidebar.button("启动终极分析报告"):
     run_v27_engine(symbol)
