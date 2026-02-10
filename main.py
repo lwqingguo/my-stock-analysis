@@ -6,98 +6,101 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # 1. 页面配置
-st.set_page_config(page_title="财务全图谱-V47", layout="wide")
+st.set_page_config(page_title="财务全图谱-V48", layout="wide")
 
-# 2. 侧边栏 UI 精进优化
-st.sidebar.header("🛡️ 诊断控制中心")
+# 2. 侧边栏优化：更直观的交互
+st.sidebar.header("📊 诊断模式配置")
+mode = st.sidebar.selectbox("1. 分析频率", ["年度 (Annual) 深度对比", "季度 (Quarterly) 深度透视"], index=1)
 
-# 频率选择
-time_frame = st.sidebar.selectbox("1. 报表频率", ["年度 (Annual)", "季度 (Quarterly)"], index=1)
-
-# By Q 深度透视逻辑
-q_filter_months = []
-if time_frame == "季度 (Quarterly)":
+q_pivot_month = None
+if "季度" in mode:
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📅 By Q 深度透视设置")
-    use_q_pivot = st.sidebar.toggle("开启特定季度趋势对比", value=True)
-    
-    if use_q_pivot:
-        q_choice = st.sidebar.radio("选择要回溯的季度点：", ["Q1 (3月)", "Q2 (6月)", "Q3 (9月)", "Q4 (12月)"], index=2)
-        q_map = {"Q1 (3月)": "-03", "Q2 (6月)": "-06", "Q3 (9月)": "-09", "Q4 (12月)": "-12"}
-        q_filter_months = [q_map[q_choice]]
-        st.sidebar.caption(f"系统将提取历年所有 {q_choice} 数据进行趋势分析")
+    st.sidebar.subheader("📅 By Q 趋势透视")
+    # 提供明确的 Q 选择
+    q_target = st.sidebar.radio("选择要回溯的特定季度：", ["Q1 (3月)", "Q2 (6月)", "Q3 (9月)", "Q4 (12月)"], index=0)
+    q_map = {"Q1 (3月)": "-03", "Q2 (6月)": "-06", "Q3 (9月)": "-09", "Q4 (12月)": "-12"}
+    q_pivot_month = q_map[q_target]
+    st.sidebar.info(f"开启后，图表将展示历年所有 {q_target} 的趋势对比（看 5-10 年走势）。")
 
 st.sidebar.markdown("---")
-stock_list = {"东鹏饮料": "605499.SS", "贵州茅台": "600519.SS", "英伟达": "NVDA", "特斯拉": "TSLA"}
-selected_stock = st.sidebar.selectbox("2. 快捷公司", list(stock_list.keys()))
+stock_list = {"东鹏饮料": "605499.SS", "贵州茅台": "600519.SS", "英伟达": "NVDA"}
+selected_stock = st.sidebar.selectbox("2. 快捷选择公司", list(stock_list.keys()))
 symbol = st.sidebar.text_input("3. 股票代码", stock_list[selected_stock]).upper()
 
-# --- 核心辅助函数：数据抓取与补全 ---
-def get_safe(df, tags):
+# --- 核心辅助函数：三级防撞抓取逻辑 ---
+def get_safe_metric(df, primary_tags, fallback_logic=None):
     if df is None or df.empty: return pd.Series(dtype=float)
-    for tag in tags:
+    # 1. 尝试主标签
+    for tag in primary_tags:
         if tag in df.index:
-            return df.loc[tag].replace('-', np.nan).astype(float).fillna(0.0)
+            vals = df.loc[tag].replace('-', np.nan).astype(float)
+            if not vals.dropna().empty: return vals.fillna(0.0)
+    # 2. 尝试逻辑倒算 (如 资产 - 权益)
+    if fallback_logic is not None:
+        try:
+            return fallback_logic().fillna(0.0)
+        except:
+            pass
     return pd.Series([0.0] * len(df.columns), index=df.columns)
 
 # --- 主引擎 ---
-def run_v47_engine(ticker, is_annual, filter_q):
+def run_v48_engine(ticker, is_annual, q_month):
     try:
         stock = yf.Ticker(ticker)
-        # 抓取所有可用历史（不限制数量）
-        is_raw = stock.income_stmt if is_annual else stock.quarterly_income_stmt
-        bs_raw = stock.balance_sheet if is_annual else stock.quarterly_balance_sheet
-        cf_raw = stock.cashflow if is_annual else stock.quarterly_cashflow
+        # 抓取全量历史报表
+        is_df = (stock.income_stmt if is_annual else stock.quarterly_income_stmt).sort_index(axis=1, ascending=True)
+        bs_df = (stock.balance_sheet if is_annual else stock.quarterly_balance_sheet).sort_index(axis=1, ascending=True)
+        cf_df = (stock.cashflow if is_annual else stock.quarterly_cashflow).sort_index(axis=1, ascending=True)
 
-        if is_raw.empty:
-            st.error("无法获取数据，请检查网络或代码。")
+        if is_df.empty:
+            st.error("数据源返回为空，请检查代码后缀是否正确（如 .SS 或 .SZ）。")
             return
 
-        # 1. 初始排序
-        is_df = is_raw.sort_index(axis=1, ascending=True)
-        bs_df = bs_raw.sort_index(axis=1, ascending=True)
-        cf_df = cf_raw.sort_index(axis=1, ascending=True)
-
-        # 2. 🔥 By Q 深度过滤 (如果是季度模式且开启了过滤)
-        if not is_annual and filter_q:
-            # 筛选所有符合月份要求的列（例如所有3月报表）
-            mask = is_df.columns.map(lambda x: any(m in x.strftime('%Y-%m') for m in filter_q))
-            is_df = is_df.loc[:, mask]
-            bs_df = bs_df.loc[:, mask]
-            cf_df = cf_df.loc[:, mask]
-        else:
-            # 普通模式：截取最近12期
-            is_df = is_df.iloc[:, -12:]
-            bs_df = bs_df.iloc[:, -12:]
-            cf_df = cf_df.iloc[:, -12:]
-
-        # 3. 标签处理
+        # 🔥 By Q 深度趋势切片：如果是季度模式，筛选所有历史年份的对应月份
+        if not is_annual and q_month:
+            mask = is_df.columns.map(lambda x: q_month in x.strftime('%Y-%m'))
+            is_df, bs_df, cf_df = is_df.loc[:, mask], bs_df.loc[:, mask], cf_df.loc[:, mask]
+        
+        # 确保至少有 3-4 年数据进行展示，不设上限以展示长趋势
         labels = [d.strftime('%Y-%m') for d in is_df.columns]
         is_df.columns = bs_df.columns = cf_df.columns = labels
 
-        # --- 全量指标 (一个不删) ---
-        rev = get_safe(is_df, ['Total Revenue', 'Revenue'])
-        ni = get_safe(is_df, ['Net Income'])
-        ebit = get_safe(is_df, ['EBIT', 'Operating Income'])
-        assets = get_safe(bs_df, ['Total Assets'])
-        equity = get_safe(bs_df, ['Stockholders Equity', 'Total Equity'])
-        ca = get_safe(bs_df, ['Total Current Assets'])
-        cl = get_safe(bs_df, ['Total Current Liabilities'])
-        liab = get_safe(bs_df, ['Total Liabilities']).replace(0, np.nan).fillna(assets - equity)
-        ar, inv, ap = get_safe(bs_df, ['Net Receivables']), get_safe(bs_df, ['Inventory']), get_safe(bs_df, ['Accounts Payable'])
-        ocf = get_safe(cf_df, ['Operating Cash Flow'])
-        div = get_safe(cf_df, ['Cash Dividends Paid']).abs()
-        interest = get_safe(is_df, ['Interest Expense', 'Financial Expense']).abs()
+        # --- 指标提取 (强力修正版) ---
+        rev = get_safe_metric(is_df, ['Total Revenue', 'Revenue', 'Operating Revenue'])
+        ni = get_safe_metric(is_df, ['Net Income', 'Net Income Common Stockholders'])
+        ebit = get_safe_metric(is_df, ['EBIT', 'Operating Income'])
+        
+        assets = get_safe_metric(bs_df, ['Total Assets'])
+        equity = get_safe_metric(bs_df, ['Stockholders Equity', 'Total Equity'])
+        # 负债强力修复：总负债 -> (资产-权益) -> (流动+非流动)
+        liab = get_safe_metric(bs_df, ['Total Liabilities'], 
+                              fallback_logic=lambda: assets - equity)
+        
+        ca = get_safe_metric(bs_df, ['Total Current Assets', 'Current Assets'])
+        cl = get_safe_metric(bs_df, ['Total Current Liabilities', 'Current Liabilities'])
+        
+        ar = get_safe_metric(bs_df, ['Net Receivables', 'Receivables'])
+        inv = get_safe_metric(bs_df, ['Inventory'])
+        ap = get_safe_metric(bs_df, ['Accounts Payable'])
+        
+        ocf = get_safe_metric(cf_df, ['Operating Cash Flow'])
+        div = get_safe_metric(cf_df, ['Cash Dividends Paid', 'Dividends Paid']).abs()
+        # 利息支出强力修复：利息支出 -> 财务费用
+        interest = get_safe_metric(is_df, ['Interest Expense', 'Financial Expense']).abs()
 
-        # 计算
+        # --- 计算核心比率 ---
         growth = rev.pct_change().fillna(0) * 100
         roe = (ni / equity * 100).fillna(0)
         debt_ratio = (liab / assets * 100).fillna(0)
-        curr_ratio = (ca / cl).fillna(0)
-        c2c = ((ar/rev*365) + (inv/rev*365) - (ap/rev*365)).fillna(0)
+        curr_ratio = (ca / cl).replace([np.inf, -np.inf], 0).fillna(0)
         int_cover = (ebit / interest.replace(0, 1.0)).fillna(0)
+        c2c = ((ar/rev*365) + (inv/rev*365) - (ap/rev*365)).fillna(0)
+        roic = ((ebit * 0.75) / (equity + 1).values * 100).fillna(0)
 
-        # --- 头部总结与打分 ---
+        # --- 页面展示 ---
+        st.title(f"🏛️ 财务全图谱 V48 (终极 By Q 版)：{ticker}")
+        
+        # 打分系统
         score = 0
         if not roe.empty:
             if roe.iloc[-1] > 15: score += 2
@@ -106,49 +109,52 @@ def run_v47_engine(ticker, is_annual, filter_q):
             if growth.iloc[-1] > 10: score += 2
             if c2c.iloc[-1] < 60: score += 2
 
-        st.title(f"🏛️ 财务 By Q 深度透视 V47：{ticker}")
-        st.caption(f"当前模式：{'特定季度同比趋势' if filter_q else '连续季度趋势'} | 覆盖点数：{len(labels)}")
-        
-        c1, c2 = st.columns([1, 2])
-        with c1:
+        col_score, col_text = st.columns([1, 2])
+        with col_score:
             color = "#2E7D32" if score >= 8 else "#FFA000"
-            st.markdown(f'<div style="text-align:center; border:5px solid {color}; border-radius:15px; padding:20px;"><h1 style="font-size:60px; color:{color};">{score}</h1><p>综合健康分</p></div>', unsafe_allow_html=True)
-        with c2:
-            st.subheader("📋 深度诊断报告")
-            st.write(f"**趋势分析**：基于历年 {labels[-1][-2:]} 月数据的对比分析。")
-            st.write(f"**核心提示**：{labels[-1]} 负债率为 {debt_ratio.iloc[-1]:.1f}%，较上一对比期{'上升' if debt_ratio.diff().iloc[-1]>0 else '下降'}。")
+            st.markdown(f'''<div style="text-align:center; border:5px solid {color}; border-radius:15px; padding:20px;">
+                <h1 style="font-size:70px; color:{color}; margin:0;">{score}</h1><p>综合健康评分</p></div>''', unsafe_allow_html=True)
+        with col_text:
+            st.subheader("📝 核心诊断总结")
+            st.write(f"**模式**：当前展示历年 **{q_target if q_month else '连续'}** 趋势（共 {len(labels)} 个周期）。")
+            st.write(f"**诊断**：最新 ROE 为 {roe.iloc[-1]:.2f}%，资产负债率 {debt_ratio.iloc[-1]:.1f}%。")
         st.divider()
 
-        # --- 六大图表 (全量不删) ---
-        st.header("1️⃣ 历年营收与增速同比趋势")
+        # --- 6 大板块 ---
+        # 1. 营收趋势
+        st.header("1️⃣ 历年同期营收与增速对比")
         f1 = make_subplots(specs=[[{"secondary_y": True}]])
         f1.add_trace(go.Bar(x=labels, y=rev, name="营收"), secondary_y=False)
         f1.add_trace(go.Scatter(x=labels, y=growth, name="同比增速%", line=dict(color='red', width=3)), secondary_y=True)
         f1.update_xaxes(type='category'); st.plotly_chart(f1, use_container_width=True)
 
-        st.header("2️⃣ 盈利效率 (ROE 杜邦分析)")
+        # 2. 杜邦分析
+        st.header("2️⃣ 盈利驱动 (ROE 杜邦分析)")
         f2 = go.Figure()
         f2.add_trace(go.Scatter(x=labels, y=ni/rev*100, name="净利率%"))
         f2.add_trace(go.Scatter(x=labels, y=rev/assets*10, name="资产周转x10"))
-        f2.add_trace(go.Scatter(x=labels, y=assets/equity, name="权益乘数"))
         f2.update_xaxes(type='category'); st.plotly_chart(f2, use_container_width=True)
 
-        st.header("3️⃣ 经营细节 (ROIC & C2C)")
+        # 3. 经营细节
+        st.header("3️⃣ 经营效率 (ROIC & C2C)")
         c31, c32 = st.columns(2)
-        with c31: st.write("**ROIC %**"); st.line_chart(pd.Series((ebit*0.75)/(equity+1).values, index=labels))
-        with c32: st.write("**C2C 现金周期 (天)**"); st.bar_chart(pd.Series(c2c.values, index=labels))
+        with c31: st.write("ROIC %"); st.line_chart(pd.Series(roic.values, index=labels))
+        with c32: st.write("C2C 周期 (天)"); st.bar_chart(pd.Series(c2c.values, index=labels))
 
+        # 4. OWC
         st.header("4️⃣ 营运资产管理 (OWC)")
-        st.bar_chart(pd.Series((ca-cl).values, index=labels))
+        st.bar_chart(pd.Series((ca - cl).values, index=labels))
 
-        st.header("5️⃣ 现金流质量与股东回报")
+        # 5. 现金流
+        st.header("5️⃣ 现金流质量与分红回报")
         f5 = go.Figure()
         f5.add_trace(go.Scatter(x=labels, y=ni, name="净利润"))
         f5.add_trace(go.Scatter(x=labels, y=ocf, name="经营现金流"))
         f5.add_trace(go.Bar(x=labels, y=div, name="分红", opacity=0.3))
         f5.update_xaxes(type='category'); st.plotly_chart(f5, use_container_width=True)
 
-        st.header("6️⃣ 财务安全性评估")
+        # 6. 安全性 (🔥 重点修复区)
+        st.header("6️⃣ 财务安全性深度评估")
         c61, c62, c63 = st.columns(3)
         with c61:
             st.write("**资产负债率 %**")
@@ -164,7 +170,7 @@ def run_v47_engine(ticker, is_annual, filter_q):
             f63.update_layout(xaxis_type='category', height=300); st.plotly_chart(f63, use_container_width=True)
 
     except Exception as e:
-        st.error(f"引擎运行失败: {e}")
+        st.error(f"引擎发生逻辑错误: {e}")
 
-if st.sidebar.button("🚀 执行深度 By Q 诊断"):
-    run_v47_engine(symbol, time_frame == "年度 (Annual)", q_filter_months)
+if st.sidebar.button("🚀 启动旗舰版深度诊断"):
+    run_v48_engine(symbol, "年度" in mode, q_pivot_month)
