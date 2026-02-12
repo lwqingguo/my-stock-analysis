@@ -1,4 +1,5 @@
 streamlit
-yfinance
+akshare
 pandas
+numpy
 plotly
