@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # 1. 页面配置
-st.set_page_config(page_title="财务全图谱-V69.5", layout="wide")
+st.set_page_config(page_title="财务全图谱-V69.6", layout="wide")
 
 # 2. 侧边栏
 st.sidebar.header("🔍 数据维度设置")
@@ -33,6 +33,7 @@ def get_any(df, tags):
 def run_v69_engine(ticker, is_annual):
     try:
         stock = yf.Ticker(ticker)
+        info = stock.info
         is_raw = stock.income_stmt if is_annual else stock.quarterly_income_stmt
         bs_raw = stock.balance_sheet if is_annual else stock.quarterly_balance_sheet
         cf_raw = stock.cashflow if is_annual else stock.quarterly_cashflow
@@ -47,7 +48,7 @@ def run_v69_engine(ticker, is_annual):
         years = [d.strftime('%Y-%m') for d in is_df.columns]
         is_df.columns = bs_df.columns = cf_df.columns = years
 
-        # --- 数据提取 ---
+        # --- 核心指标计算 ---
         rev = get_any(is_df, ['Total Revenue', 'Revenue'])
         ni = get_any(is_df, ['Net Income'])
         ebit = get_any(is_df, ['EBIT', 'Operating Income'])
@@ -57,109 +58,94 @@ def run_v69_engine(ticker, is_annual):
         cl = get_any(bs_df, ['Total Current Liabilities', 'Current Liabilities'])
         liab = get_any(bs_df, ['Total Liabilities']).replace(0, np.nan).fillna(assets - equity)
         cash = get_any(bs_df, ['Cash And Cash Equivalents'])
-        st_debt = get_any(bs_df, ['Short Term Debt', 'Current Debt'])
-        ar = get_any(bs_df, ['Net Receivables'])
-        inv = get_any(bs_df, ['Inventory'])
-        ap = get_any(bs_df, ['Accounts Payable'])
         ocf = get_any(cf_df, ['Operating Cash Flow'])
         div = get_any(cf_df, ['Cash Dividends Paid']).abs()
         interest = get_any(is_df, ['Interest Expense', 'Financial Expense']).abs()
 
-        # --- 核心计算 ---
-        calc_df = pd.DataFrame({'ca': ca, 'cl': cl, 'rev': rev, 'ni': ni, 'assets': assets, 'equity': equity, 'cash': cash, 'st_debt': st_debt}).fillna(0)
-        
+        calc_df = pd.DataFrame({'ca': ca, 'cl': cl, 'rev': rev, 'ni': ni, 'assets': assets, 'equity': equity, 'cash': cash}).fillna(0)
         growth = calc_df['rev'].pct_change().fillna(0) * 100
         roe = (calc_df['ni'] / calc_df['equity'] * 100).fillna(0)
         debt_ratio = (liab / assets * 100).fillna(0)
         curr_ratio_pct = (calc_df['ca'] / calc_df['cl'].replace(0, np.nan) * 100).fillna(0)
         int_cover = (ebit / interest.replace(0, 1.0)).fillna(0)
-        c2c = ((ar/rev*365) + (inv/rev*365) - (ap/rev*365)).fillna(0)
-        owc = (calc_df['ca'] - calc_df['cash']) - (calc_df['cl'] - calc_df['st_debt'])
         
-        net_margin = (calc_df['ni'] / calc_df['rev'] * 100).fillna(0)
-        asset_turnover = (calc_df['rev'] / calc_df['assets']).fillna(0)
-        equity_multiplier = (calc_df['assets'] / calc_df['equity']).fillna(0)
+        # --- 1. 顶部：公司概况与商业模式 ---
+        st.title(f"🏛️ 财务审计图谱 V69.6：{info.get('longName', ticker)}")
+        
+        with st.expander("🏢 查看公司主营业务与商业模式", expanded=True):
+            c_info1, c_info2 = st.columns([1, 2])
+            with c_info1:
+                st.write(f"**行业领域**：{info.get('industryDisp', info.get('industry', '未知'))}")
+                st.write(f"**板块分类**：{info.get('sectorDisp', info.get('sector', '未知'))}")
+                st.write(f"**上市地点**：{info.get('exchange', '未知')}")
+                st.write(f"**全职员工**：{info.get('fullTimeEmployees', 'N/A')}")
+            with c_info2:
+                st.write("**业务摘要**：")
+                summary = info.get('longBusinessSummary', '暂无业务描述。')
+                st.write(f"{summary[:500]}..." if len(summary) > 500 else summary)
 
-        # --- 新增：智能打分系统 ---
+        # --- 2. 智能打分系统 ---
         score = 0
-        l_roe = roe.iloc[-1]
-        l_cq = (ocf.iloc[-1] / ni.iloc[-1]) if ni.iloc[-1] != 0 else 0
-        l_debt = debt_ratio.iloc[-1]
-        l_growth = growth.iloc[-1]
-
+        l_roe, l_cq, l_debt, l_growth = roe.iloc[-1], (ocf.iloc[-1]/ni.iloc[-1] if ni.iloc[-1]!=0 else 0), debt_ratio.iloc[-1], growth.iloc[-1]
         if l_roe > 15: score += 2.5
         if l_cq > 1: score += 2.5
         if l_debt < 50: score += 2.5
         if l_growth > 10: score += 2.5
 
-        # --- 头部总结展示 ---
-        st.title(f"🏛️ 财务审计图谱 V69.5：{ticker}")
-        
         col_score, col_diag = st.columns([1, 2])
         with col_score:
             color = "#2E7D32" if score >= 7.5 else "#FFA000" if score >= 5 else "#D32F2F"
             st.markdown(f'''<div style="text-align:center; border:5px solid {color}; border-radius:15px; padding:20px;">
                 <h1 style="font-size:80px; color:{color}; margin:0;">{score:g}</h1>
                 <p style="color:{color}; font-size:20px; font-weight:bold;">综合健康评分 (满分10)</p></div>''', unsafe_allow_html=True)
-        
         with col_diag:
             st.subheader("📝 核心诊断总结")
-            st.write(f"**1. 盈利能力**：最新 ROE 为 **{l_roe:.2f}%**，{'回报优秀' if l_roe > 15 else '回报率一般'}。")
-            st.write(f"**2. 现金含金量**：经营现金流/净利润为 **{l_cq:.2f}**，{'现金转化极强' if l_cq > 1 else '需警惕利润成色'}。")
-            st.write(f"**3. 财务杠杆**：资产负债率为 **{l_debt:.1f}%**，{'负债结构稳健' if l_debt < 50 else '负债率偏高'}。")
-            st.write(f"**4. 成长动能**：营收增速为 **{l_growth:.1f}%**，{'处于扩张期' if l_growth > 10 else '增速放缓'}。")
+            st.write(f"**1. 盈利能力**：ROE **{l_roe:.2f}%** ({'回报优秀' if l_roe > 15 else '回报率一般'})")
+            st.write(f"**2. 现金含金量**：现金流/利润 **{l_cq:.2f}** ({'现金转化强' if l_cq > 1 else '利润成色一般'})")
+            st.write(f"**3. 财务杠杆**：资产负债率 **{l_debt:.1f}%** ({'结构稳健' if l_debt < 50 else '负债率偏高'})")
+            st.write(f"**4. 成长动能**：营收增速 **{l_growth:.1f}%** ({'扩张期' if l_growth > 10 else '增速放缓'})")
         
         st.divider()
 
-        # 1. 营收规模
+        # --- 3. 后续图表展示 (保持之前的并列结构) ---
+        # 营收
         st.header("1️⃣ 营收规模与利润空间")
         f1 = make_subplots(specs=[[{"secondary_y": True}]])
         f1.add_trace(go.Bar(x=years, y=rev, name="营收"), secondary_y=False)
         f1.add_trace(go.Scatter(x=years, y=growth, name="增速%", line=dict(color='red')), secondary_y=True)
         st.plotly_chart(f1, use_container_width=True)
 
-        # 2. ROE 深度拆解 (三图并列)
+        # ROE 杜邦
         st.header("2️⃣ 核心回报：ROE 杜邦三因子拆解")
+        
         rc1, rc2, rc3 = st.columns(3)
-        with rc1:
-            st.write("**因子 1：净利率 (%)**")
-            st.line_chart(net_margin)
-        with rc2:
-            st.write("**因子 2：总资产周转率 (次)**")
-            st.line_chart(asset_turnover)
-        with rc3:
-            st.write("**因子 3：权益乘数 (杠杆)**")
-            st.line_chart(equity_multiplier)
+        with rc1: st.write("**净利率 (%)**"); st.line_chart((ni/rev*100).fillna(0))
+        with rc2: st.write("**资产周转率 (次)**"); st.line_chart((rev/assets).fillna(0))
+        with rc3: st.write("**权益乘数 (杠杆)**"); st.line_chart((assets/equity).fillna(0))
 
-        # 3. 经营效率
-        st.header("3️⃣ 经营效率 (C2C & OWC)")
+        # 效率
+        st.header("3️⃣ 经营效率与营运资本")
         c31, c32 = st.columns(2)
-        with c31: st.write("**C2C 周期 (天)**"); st.bar_chart(pd.Series(c2c.values, index=years))
-        with c32: st.write("**营运资本 OWC**"); st.bar_chart(pd.Series(owc.values, index=years))
+        with c31: st.write("**C2C 周期 (天)**"); st.bar_chart(((get_any(bs_df,['Net Receivables'])/rev*365)+(get_any(bs_df,['Inventory'])/rev*365)-(get_any(bs_df,['Accounts Payable'])/rev*365)).fillna(0))
+        with c32: st.write("**营运资本 OWC**"); st.bar_chart((ca-cash)-(cl-get_any(bs_df,['Short Term Debt'])).fillna(0))
 
-        # 4. 利润质量与分红
+        # 现金流
         st.header("4️⃣ 利润质量与股东回报")
         f4 = go.Figure()
         f4.add_trace(go.Bar(x=years, y=ni, name="净利润"))
         f4.add_trace(go.Bar(x=years, y=ocf, name="经营现金流"))
-        f4.add_trace(go.Bar(x=years, y=div, name="现金分红", opacity=0.5))
+        f4.add_trace(go.Bar(x=years, y=div, name="分红", opacity=0.5))
         f4.update_layout(barmode='group'); st.plotly_chart(f4, use_container_width=True)
 
-        # 5. 财务安全性评估 (三图并列)
-        st.header("5️⃣ 财务安全性评估 (杠杆 / 流动性 / 偿债)")
+        # 安全
+        st.header("5️⃣ 财务安全性评估")
         sc1, sc2, sc3 = st.columns(3)
-        with sc1:
-            st.write("**资产负债率 (%)**")
-            st.line_chart(debt_ratio)
-        with sc2:
-            st.write("**流动覆盖率 (%)**")
-            st.line_chart(curr_ratio_pct)
-        with sc3:
-            st.write("**利息保障倍数 (次)**")
-            st.line_chart(int_cover)
+        with sc1: st.write("**资产负债率 (%)**"); st.line_chart(debt_ratio)
+        with sc2: st.write("**流动覆盖率 (%)**"); st.line_chart(curr_ratio_pct)
+        with sc3: st.write("**利息保障倍数 (次)**"); st.line_chart(int_cover)
 
     except Exception as e:
         st.error(f"分析引擎发生错误: {e}")
 
-if st.sidebar.button("启动全量诊断"):
+if st.sidebar.button("启动诊断"):
     run_v69_engine(symbol, time_frame == "年度趋势 (Annual)")
