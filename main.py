@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # 1. 页面配置
-st.set_page_config(page_title="财务全图谱-V70.0", layout="wide")
+st.set_page_config(page_title="财务全图谱-V70.1", layout="wide")
 
 # 2. 侧边栏
 st.sidebar.header("🔍 数据维度设置")
@@ -21,37 +21,28 @@ stock_list = {
 selected_stock = st.sidebar.selectbox("快速选择：", list(stock_list.keys()))
 symbol = st.sidebar.text_input("手动输入代码：", stock_list[selected_stock]).upper()
 
-# --- 辅助函数：普通图表 ---
+# --- 辅助函数：图表渲染 ---
 def st_plotly_line(x, y, name, unit="", color=None):
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=x, y=y, name=name,
         mode='lines+markers+text',
-        text=[f"{v:.2f}{unit}" for v in y],
+        text=[f"{v:,.2f}{unit}" for v in y],
         textposition="top center",
         line=dict(color=color, width=3)
     ))
     fig.update_layout(title={'text': name, 'x': 0.5, 'xanchor': 'center'}, height=300, margin=dict(l=10, r=10, t=50, b=10), xaxis_type='category')
     st.plotly_chart(fig, use_container_width=True)
 
-# --- 核心改进：千分位符渲染器 (OWC 专用) ---
 def st_plotly_bar_comma(x, y, name, color=None):
     fig = go.Figure()
-    # 生成千分位标签，不带小数位
-    comma_text = [f"{v:,.0f}" for v in y]
-    
     fig.add_trace(go.Bar(
         x=x, y=y, name=name,
-        text=comma_text,
+        text=[f"{v:,.0f}" for v in y],
         textposition='outside',
         marker_color=color
     ))
-    fig.update_layout(
-        title={'text': name, 'x': 0.5, 'xanchor': 'center'},
-        height=300, 
-        margin=dict(l=10, r=10, t=50, b=10), 
-        xaxis_type='category'
-    )
+    fig.update_layout(title={'text': name, 'x': 0.5, 'xanchor': 'center'}, height=300, margin=dict(l=10, r=10, t=50, b=10), xaxis_type='category')
     st.plotly_chart(fig, use_container_width=True)
 
 def get_any(df, tags):
@@ -82,7 +73,7 @@ def run_v70_engine(ticker, is_annual):
         years = [d.strftime('%Y-%m') for d in is_df.columns]
         is_df.columns = bs_df.columns = cf_df.columns = years
 
-        # --- 指标提取 ---
+        # --- 数据提取 ---
         rev = get_any(is_df, ['Total Revenue', 'Revenue'])
         ni = get_any(is_df, ['Net Income'])
         ebit = get_any(is_df, ['EBIT', 'Operating Income'])
@@ -92,7 +83,8 @@ def run_v70_engine(ticker, is_annual):
         cl = get_any(bs_df, ['Total Current Liabilities', 'Current Liabilities'])
         liab = get_any(bs_df, ['Total Liabilities']).replace(0, np.nan).fillna(assets - equity)
         cash = get_any(bs_df, ['Cash And Cash Equivalents'])
-        ocf = get_any(cf_df, ['Operating Cash Flow'])
+        # 修正核心术语：净经营现金流
+        nocf = get_any(cf_df, ['Operating Cash Flow']) 
         div = get_any(cf_df, ['Cash Dividends Paid']).abs()
         interest = get_any(is_df, ['Interest Expense', 'Financial Expense']).abs()
 
@@ -104,15 +96,15 @@ def run_v70_engine(ticker, is_annual):
         curr_ratio_pct = (calc_df['ca'] / calc_df['cl'].replace(0, np.nan) * 100).fillna(0)
         int_cover = (ebit / interest.replace(0, 1.0)).fillna(0)
 
-        # --- 1. 顶部：公司业务与模式 ---
-        st.title(f"🏛️ 财务审计图谱 V70.0：{info.get('longName', ticker)}")
+        # 1. 公司业务与模式
+        st.title(f"🏛️ 财务审计图谱 V70.1：{info.get('longName', ticker)}")
         with st.expander("🏢 查看公司主营业务与商业模式", expanded=True):
             st.write(f"**行业**：{info.get('industry', '未知')} | **全职员工**：{info.get('fullTimeEmployees', 'N/A')}")
             st.write(f"**业务摘要**：{info.get('longBusinessSummary', '暂无描述')[:800]}...")
 
-        # --- 2. 完整评分与诊断总结 (恢复并增强) ---
+        # 2. 完整评分与总结
         score = 0
-        l_roe, l_cq, l_debt, l_growth = roe.iloc[-1], (ocf.iloc[-1]/ni.iloc[-1] if ni.iloc[-1]!=0 else 0), debt_ratio.iloc[-1], growth.iloc[-1]
+        l_roe, l_cq, l_debt, l_growth = roe.iloc[-1], (nocf.iloc[-1]/ni.iloc[-1] if ni.iloc[-1]!=0 else 0), debt_ratio.iloc[-1], growth.iloc[-1]
         if l_roe > 15: score += 2.5
         if l_cq > 1: score += 2.5
         if l_debt < 50: score += 2.5
@@ -126,14 +118,14 @@ def run_v70_engine(ticker, is_annual):
                 <p style="color:{color}; font-size:20px; font-weight:bold;">综合健康评分 (10分制)</p></div>''', unsafe_allow_html=True)
         with col_diag:
             st.subheader("📝 核心财务诊断总结")
-            st.write(f"✅ **盈利能力**：最新 ROE 为 **{l_roe:.2f}%** ({'回报优秀' if l_roe > 15 else '回报率一般'})")
-            st.write(f"✅ **现金质量**：净现比为 **{l_cq:.2f}** ({'现金转化极强' if l_cq > 1 else '利润成色需关注'})")
-            st.write(f"✅ **财务杠杆**：资产负债率为 **{l_debt:.1f}%** ({'财务结构稳健' if l_debt < 50 else '杠杆偏高'})")
-            st.write(f"✅ **成长动能**：营收增速为 **{l_growth:.1f}%** ({'处于扩张期' if l_growth > 10 else '增速有所放缓'})")
+            st.write(f"✅ **盈利能力**：最新 ROE 为 **{l_roe:.2f}%**")
+            st.write(f"✅ **现金质量**：净现比 (净经营现金流/净利润) 为 **{l_cq:.2f}**")
+            st.write(f"✅ **财务杠杆**：资产负债率为 **{l_debt:.1f}%**")
+            st.write(f"✅ **成长动能**：营收增速为 **{l_growth:.1f}%**")
         
         st.divider()
 
-        # --- 3. 详细图表板块 ---
+        # 3. 详细图表板块
         st.header("1️⃣ 营收规模与利润空间")
         f1 = make_subplots(specs=[[{"secondary_y": True}]])
         f1.add_trace(go.Bar(x=years, y=rev, name="营收", text=[f"{v/1e8:,.0f}亿" for v in rev], textposition='auto'), secondary_y=False)
@@ -154,15 +146,14 @@ def run_v70_engine(ticker, is_annual):
             st_plotly_bar_comma(years, c2c, "C2C 现金周期 (天)", "#7D3C98")
         with c32:
             owc = (ca-cash)-(cl-get_any(bs_df,['Short Term Debt'])).fillna(0)
-            # 这里的数字标签会带千分位符且无小数
             st_plotly_bar_comma(years, owc, "营运资本 OWC (千分位展示)", "#F39C12")
 
         st.header("4️⃣ 利润质量与股东回报")
         f4 = go.Figure()
         f4.add_trace(go.Bar(x=years, y=ni, name="净利润", text=[f"{v/1e8:,.0f}亿" for v in ni], textposition='auto'))
-        f4.add_trace(go.Bar(x=years, y=ocf, name="经营现金流", text=[f"{v/1e8:,.0f}亿" for v in ocf], textposition='auto'))
+        f4.add_trace(go.Bar(x=years, y=nocf, name="净经营现金流", text=[f"{v/1e8:,.0f}亿" for v in nocf], textposition='auto'))
         f4.add_trace(go.Bar(x=years, y=div, name="现金分红", text=[f"{v/1e8:,.0f}亿" if v!=0 else "" for v in div], textposition='auto'))
-        f4.update_layout(title={'text': "利润 vs 现金流 vs 分红", 'x': 0.5, 'xanchor': 'center'}, barmode='group')
+        f4.update_layout(title={'text': "利润 vs 净经营现金流 vs 分红", 'x': 0.5, 'xanchor': 'center'}, barmode='group')
         st.plotly_chart(f4, use_container_width=True)
 
         st.header("5️⃣ 财务安全性评估")
