@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # 1. 页面配置
-st.set_page_config(page_title="财务全图谱-V69.1", layout="wide")
+st.set_page_config(page_title="财务全图谱-V69.2", layout="wide")
 
 # 2. 侧边栏
 st.sidebar.header("🔍 数据维度设置")
@@ -21,7 +21,6 @@ stock_list = {
 selected_stock = st.sidebar.selectbox("快速选择：", list(stock_list.keys()))
 symbol = st.sidebar.text_input("手动输入代码：", stock_list[selected_stock]).upper()
 
-# --- 核心辅助函数 ---
 def get_any(df, tags):
     if df is None or df.empty: return pd.Series([0.0] * 8)
     df.index = df.index.map(str).str.strip()
@@ -31,7 +30,6 @@ def get_any(df, tags):
             if not res.dropna().empty: return res.fillna(0.0)
     return pd.Series([0.0] * len(df.columns), index=df.columns)
 
-# --- 主分析引擎 ---
 def run_v69_engine(ticker, is_annual):
     try:
         stock = yf.Ticker(ticker)
@@ -40,61 +38,51 @@ def run_v69_engine(ticker, is_annual):
         cf_raw = stock.cashflow if is_annual else stock.quarterly_cashflow
 
         if is_raw.empty or bs_raw.empty:
-            st.error("数据抓取失败，请检查代码或网络。")
+            st.error("数据抓取失败，请检查。")
             return
 
-        # 统一正序与日期轴，取最近8期
         is_df = is_raw.sort_index(axis=1, ascending=True).iloc[:, -8:]
         bs_df = bs_raw.sort_index(axis=1, ascending=True).iloc[:, -8:]
         cf_df = cf_raw.sort_index(axis=1, ascending=True).iloc[:, -8:]
         years = [d.strftime('%Y-%m') for d in is_df.columns]
         is_df.columns = bs_df.columns = cf_df.columns = years
 
-        # --- 全量指标提取 ---
-        rev = get_any(is_df, ['Total Revenue', 'Revenue', 'Operating Revenue'])
-        ni = get_any(is_df, ['Net Income', 'Net Income Common Stockholders'])
+        # --- 数据提取 ---
+        rev = get_any(is_df, ['Total Revenue', 'Revenue'])
+        ni = get_any(is_df, ['Net Income'])
         ebit = get_any(is_df, ['EBIT', 'Operating Income'])
         assets = get_any(bs_df, ['Total Assets'])
-        equity = get_any(bs_df, ['Stockholders Equity', 'Total Equity'])
-        
-        # 加强版流动资产/负债提取
-        ca = get_any(bs_df, ['Total Current Assets', 'Current Assets', 'Working Capital Assets'])
-        cl = get_any(bs_df, ['Total Current Liabilities', 'Current Liabilities', 'Working Capital Liabilities'])
-        
+        equity = get_any(bs_df, ['Stockholders Equity'])
+        ca = get_any(bs_df, ['Total Current Assets', 'Current Assets'])
+        cl = get_any(bs_df, ['Total Current Liabilities', 'Current Liabilities'])
         liab = get_any(bs_df, ['Total Liabilities']).replace(0, np.nan).fillna(assets - equity)
-        cash = get_any(bs_df, ['Cash And Cash Equivalents', 'Cash Cash Equivalents And Short Term Investments'])
+        cash = get_any(bs_df, ['Cash And Cash Equivalents'])
         st_debt = get_any(bs_df, ['Short Term Debt', 'Current Debt'])
-        ar = get_any(bs_df, ['Net Receivables', 'Receivables'])
+        ar = get_any(bs_df, ['Net Receivables'])
         inv = get_any(bs_df, ['Inventory'])
         ap = get_any(bs_df, ['Accounts Payable'])
         ocf = get_any(cf_df, ['Operating Cash Flow'])
-        div = get_any(cf_df, ['Cash Dividends Paid', 'Dividends Paid']).abs()
-        interest = get_any(is_df, ['Interest Expense', 'Interest Expense Non Operating', 'Financial Expense']).abs()
+        div = get_any(cf_df, ['Cash Dividends Paid']).abs()
+        interest = get_any(is_df, ['Interest Expense', 'Financial Expense']).abs()
 
-        # --- 核心计算 (通过 DataFrame 强行对齐索引) ---
-        calc_df = pd.DataFrame({
-            'ca': ca, 'cl': cl, 'rev': rev, 'ni': ni, 
-            'assets': assets, 'equity': equity, 'cash': cash, 'st_debt': st_debt
-        }).fillna(0)
-
+        # --- 核心计算 ---
+        calc_df = pd.DataFrame({'ca': ca, 'cl': cl, 'rev': rev, 'ni': ni, 'assets': assets, 'equity': equity, 'cash': cash, 'st_debt': st_debt}).fillna(0)
+        
         growth = calc_df['rev'].pct_change().fillna(0) * 100
         roe = (calc_df['ni'] / calc_df['equity'] * 100).fillna(0)
         debt_ratio = (liab / assets * 100).fillna(0)
-        
-        # 修复流动比率 0 值：确保分母不为 0
+        # 流动比率修复
         curr_ratio = (calc_df['ca'] / calc_df['cl'].replace(0, np.nan)).fillna(0)
-        
         int_cover = (ebit / interest.replace(0, 1.0)).fillna(0)
         c2c = ((ar/rev*365) + (inv/rev*365) - (ap/rev*365)).fillna(0)
         owc = (calc_df['ca'] - calc_df['cash']) - (calc_df['cl'] - calc_df['st_debt'])
         
-        # 杜邦因子
         net_margin = (calc_df['ni'] / calc_df['rev'] * 100).fillna(0)
         asset_turnover = (calc_df['rev'] / calc_df['assets']).fillna(0)
         equity_multiplier = (calc_df['assets'] / calc_df['equity']).fillna(0)
 
         # --- UI 展示 ---
-        st.title(f"🏛️ 财务全图谱 V69.1：{ticker}")
+        st.title(f"🏛️ 财务全图谱 V69.2：{ticker}")
         st.divider()
 
         # 1. 营收规模
@@ -124,7 +112,7 @@ def run_v69_engine(ticker, is_annual):
         with c31: st.write("**C2C 周期 (天)**"); st.bar_chart(pd.Series(c2c.values, index=years))
         with c32: st.write("**营运资本 OWC**"); st.bar_chart(pd.Series(owc.values, index=years))
 
-        # 4. 利润质量与分红对比
+        # 4. 利润质量与分红
         st.header("4️⃣ 利润质量与股东回报")
         f4 = go.Figure()
         f4.add_trace(go.Bar(x=years, y=ni, name="净利润"))
@@ -132,16 +120,15 @@ def run_v69_engine(ticker, is_annual):
         f4.add_trace(go.Bar(x=years, y=div, name="现金分红", opacity=0.5))
         f4.update_layout(barmode='group'); st.plotly_chart(f4, use_container_width=True)
 
-        # 5. 财务安全性评估 (拆分逻辑)
+        # 5. 财务安全性评估 (单坐标轴合并)
         st.header("5️⃣ 财务安全性评估")
         c51, c52 = st.columns([2, 1])
         with c51:
-            st.write("**资产负债率 % (左轴) vs 流动比率 (右轴)**")
-            f5 = make_subplots(specs=[[{"secondary_y": True}]])
-            f5.add_trace(go.Scatter(x=years, y=debt_ratio, name="负债率%", line=dict(color='orange', width=3)), secondary_y=False)
-            f5.add_trace(go.Bar(x=years, y=curr_ratio, name="流动比率", opacity=0.3), secondary_y=True)
-            f5.update_yaxes(title_text="负债率 (%)", range=[0, 100], secondary_y=False)
-            f5.update_yaxes(title_text="流动比率 (倍)", secondary_y=True)
+            st.write("**杠杆与流动性 (资产负债率% & 流动比率x1)**")
+            f5 = go.Figure()
+            f5.add_trace(go.Scatter(x=years, y=debt_ratio, name="资产负债率 %", line=dict(color='orange', width=4)))
+            f5.add_trace(go.Scatter(x=years, y=curr_ratio, name="流动比率 (倍)", line=dict(color='blue', width=4, dash='dot')))
+            f5.update_layout(yaxis_title="数值 (混合轴)", hovermode="x unified")
             st.plotly_chart(f5, use_container_width=True)
         with c52:
             st.write("**利息保障倍数**")
@@ -150,6 +137,5 @@ def run_v69_engine(ticker, is_annual):
     except Exception as e:
         st.error(f"分析引擎发生错误: {e}")
 
-# 启动按钮
 if st.sidebar.button("启动诊断"):
     run_v69_engine(symbol, time_frame == "年度趋势 (Annual)")
