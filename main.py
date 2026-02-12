@@ -6,9 +6,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # 1. 页面配置
-st.set_page_config(page_title="财务全图谱-V69-比率修复版", layout="wide")
+st.set_page_config(page_title="财务全图谱-V69.1", layout="wide")
 
-# 2. 侧边栏常驻逻辑
+# 2. 侧边栏
 st.sidebar.header("🔍 数据维度设置")
 time_frame = st.sidebar.radio("分析维度：", ["年度趋势 (Annual)", "季度趋势 (Quarterly)"])
 stock_list = {
@@ -21,7 +21,7 @@ stock_list = {
 selected_stock = st.sidebar.selectbox("快速选择：", list(stock_list.keys()))
 symbol = st.sidebar.text_input("手动输入代码：", stock_list[selected_stock]).upper()
 
-# --- 核心辅助函数：多标签暴力匹配 ---
+# --- 核心辅助函数 ---
 def get_any(df, tags):
     if df is None or df.empty: return pd.Series([0.0] * 8)
     df.index = df.index.map(str).str.strip()
@@ -40,10 +40,10 @@ def run_v69_engine(ticker, is_annual):
         cf_raw = stock.cashflow if is_annual else stock.quarterly_cashflow
 
         if is_raw.empty or bs_raw.empty:
-            st.error("无法获取财务报表数据，请检查代码或网络。")
+            st.error("数据抓取失败，请检查代码或网络。")
             return
 
-        # 统一正序与日期轴
+        # 统一正序与日期轴，取最近8期
         is_df = is_raw.sort_index(axis=1, ascending=True).iloc[:, -8:]
         bs_df = bs_raw.sort_index(axis=1, ascending=True).iloc[:, -8:]
         cf_df = cf_raw.sort_index(axis=1, ascending=True).iloc[:, -8:]
@@ -57,9 +57,9 @@ def run_v69_engine(ticker, is_annual):
         assets = get_any(bs_df, ['Total Assets'])
         equity = get_any(bs_df, ['Stockholders Equity', 'Total Equity'])
         
-        # [重点修复]：流动资产与流动负债的多标签匹配
-        ca = get_any(bs_df, ['Total Current Assets', 'Current Assets'])
-        cl = get_any(bs_df, ['Total Current Liabilities', 'Current Liabilities'])
+        # 加强版流动资产/负债提取
+        ca = get_any(bs_df, ['Total Current Assets', 'Current Assets', 'Working Capital Assets'])
+        cl = get_any(bs_df, ['Total Current Liabilities', 'Current Liabilities', 'Working Capital Liabilities'])
         
         liab = get_any(bs_df, ['Total Liabilities']).replace(0, np.nan).fillna(assets - equity)
         cash = get_any(bs_df, ['Cash And Cash Equivalents', 'Cash Cash Equivalents And Short Term Investments'])
@@ -71,7 +71,7 @@ def run_v69_engine(ticker, is_annual):
         div = get_any(cf_df, ['Cash Dividends Paid', 'Dividends Paid']).abs()
         interest = get_any(is_df, ['Interest Expense', 'Interest Expense Non Operating', 'Financial Expense']).abs()
 
-        # --- 核心计算 (强制对齐解决显示为 0 的问题) ---
+        # --- 核心计算 (通过 DataFrame 强行对齐索引) ---
         calc_df = pd.DataFrame({
             'ca': ca, 'cl': cl, 'rev': rev, 'ni': ni, 
             'assets': assets, 'equity': equity, 'cash': cash, 'st_debt': st_debt
@@ -81,20 +81,20 @@ def run_v69_engine(ticker, is_annual):
         roe = (calc_df['ni'] / calc_df['equity'] * 100).fillna(0)
         debt_ratio = (liab / assets * 100).fillna(0)
         
-        # [重点修复]：流动比率对齐计算
+        # 修复流动比率 0 值：确保分母不为 0
         curr_ratio = (calc_df['ca'] / calc_df['cl'].replace(0, np.nan)).fillna(0)
         
         int_cover = (ebit / interest.replace(0, 1.0)).fillna(0)
         c2c = ((ar/rev*365) + (inv/rev*365) - (ap/rev*365)).fillna(0)
         owc = (calc_df['ca'] - calc_df['cash']) - (calc_df['cl'] - calc_df['st_debt'])
         
-        # 杜邦三因子
+        # 杜邦因子
         net_margin = (calc_df['ni'] / calc_df['rev'] * 100).fillna(0)
         asset_turnover = (calc_df['rev'] / calc_df['assets']).fillna(0)
         equity_multiplier = (calc_df['assets'] / calc_df['equity']).fillna(0)
 
         # --- UI 展示 ---
-        st.title(f"🏛️ 财务全图谱 V69：{stock.info.get('longName', ticker)}")
+        st.title(f"🏛️ 财务全图谱 V69.1：{ticker}")
         st.divider()
 
         # 1. 营收规模
@@ -106,10 +106,6 @@ def run_v69_engine(ticker, is_annual):
 
         # 2. ROE 深度拆解 (3图并列)
         st.header("2️⃣ 核心回报：ROE 杜邦三因子拆解")
-        
-
-[Image of DuPont Analysis model formula]
-
         st.subheader(f"最新 ROE: {roe.iloc[-1]:.2f}%")
         rc1, rc2, rc3 = st.columns(3)
         with rc1:
@@ -155,5 +151,5 @@ def run_v69_engine(ticker, is_annual):
         st.error(f"分析引擎发生错误: {e}")
 
 # 启动按钮
-if st.sidebar.button("启动 V69 全量诊断版"):
+if st.sidebar.button("启动诊断"):
     run_v69_engine(symbol, time_frame == "年度趋势 (Annual)")
