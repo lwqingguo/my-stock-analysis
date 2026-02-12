@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # 1. 页面配置
-st.set_page_config(page_title="财务全图谱-V69.2", layout="wide")
+st.set_page_config(page_title="财务全图谱-V69.3", layout="wide")
 
 # 2. 侧边栏
 st.sidebar.header("🔍 数据维度设置")
@@ -71,8 +71,10 @@ def run_v69_engine(ticker, is_annual):
         growth = calc_df['rev'].pct_change().fillna(0) * 100
         roe = (calc_df['ni'] / calc_df['equity'] * 100).fillna(0)
         debt_ratio = (liab / assets * 100).fillna(0)
-        # 流动比率修复
-        curr_ratio = (calc_df['ca'] / calc_df['cl'].replace(0, np.nan)).fillna(0)
+        
+        # [核心调整]：将流动比率转换为百分比单位 (流动资产/流动负债 * 100)
+        curr_ratio_pct = (calc_df['ca'] / calc_df['cl'].replace(0, np.nan) * 100).fillna(0)
+        
         int_cover = (ebit / interest.replace(0, 1.0)).fillna(0)
         c2c = ((ar/rev*365) + (inv/rev*365) - (ap/rev*365)).fillna(0)
         owc = (calc_df['ca'] - calc_df['cash']) - (calc_df['cl'] - calc_df['st_debt'])
@@ -82,7 +84,7 @@ def run_v69_engine(ticker, is_annual):
         equity_multiplier = (calc_df['assets'] / calc_df['equity']).fillna(0)
 
         # --- UI 展示 ---
-        st.title(f"🏛️ 财务全图谱 V69.2：{ticker}")
+        st.title(f"🏛️ 财务全图谱 V69.3：{ticker}")
         st.divider()
 
         # 1. 营收规模
@@ -94,7 +96,6 @@ def run_v69_engine(ticker, is_annual):
 
         # 2. ROE 深度拆解 (3图并列)
         st.header("2️⃣ 核心回报：ROE 杜邦三因子拆解")
-        st.subheader(f"最新 ROE: {roe.iloc[-1]:.2f}%")
         rc1, rc2, rc3 = st.columns(3)
         with rc1:
             st.write("**因子 1：净利率 (%)**")
@@ -120,15 +121,20 @@ def run_v69_engine(ticker, is_annual):
         f4.add_trace(go.Bar(x=years, y=div, name="现金分红", opacity=0.5))
         f4.update_layout(barmode='group'); st.plotly_chart(f4, use_container_width=True)
 
-        # 5. 财务安全性评估 (单坐标轴合并)
+        # 5. 财务安全性评估 (统一单位百分比 %)
         st.header("5️⃣ 财务安全性评估")
+        
         c51, c52 = st.columns([2, 1])
         with c51:
-            st.write("**杠杆与流动性 (资产负债率% & 流动比率x1)**")
+            st.write("**杠杆与流动性 (统一单位：%)**")
             f5 = go.Figure()
-            f5.add_trace(go.Scatter(x=years, y=debt_ratio, name="资产负债率 %", line=dict(color='orange', width=4)))
-            f5.add_trace(go.Scatter(x=years, y=curr_ratio, name="流动比率 (倍)", line=dict(color='blue', width=4, dash='dot')))
-            f5.update_layout(yaxis_title="数值 (混合轴)", hovermode="x unified")
+            f5.add_trace(go.Scatter(x=years, y=debt_ratio, name="资产负债率 (%)", line=dict(color='orange', width=4)))
+            f5.add_trace(go.Scatter(x=years, y=curr_ratio_pct, name="流动覆盖率 (%)", line=dict(color='blue', width=4, dash='dot')))
+            f5.update_layout(
+                yaxis_title="百分比 (%)", 
+                hovermode="x unified",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
             st.plotly_chart(f5, use_container_width=True)
         with c52:
             st.write("**利息保障倍数**")
