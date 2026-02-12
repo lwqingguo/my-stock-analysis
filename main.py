@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # 1. 页面配置
-st.set_page_config(page_title="财务全图谱-V69.4", layout="wide")
+st.set_page_config(page_title="财务全图谱-V69.5", layout="wide")
 
 # 2. 侧边栏
 st.sidebar.header("🔍 数据维度设置")
@@ -73,7 +73,6 @@ def run_v69_engine(ticker, is_annual):
         debt_ratio = (liab / assets * 100).fillna(0)
         curr_ratio_pct = (calc_df['ca'] / calc_df['cl'].replace(0, np.nan) * 100).fillna(0)
         int_cover = (ebit / interest.replace(0, 1.0)).fillna(0)
-        
         c2c = ((ar/rev*365) + (inv/rev*365) - (ap/rev*365)).fillna(0)
         owc = (calc_df['ca'] - calc_df['cash']) - (calc_df['cl'] - calc_df['st_debt'])
         
@@ -81,8 +80,35 @@ def run_v69_engine(ticker, is_annual):
         asset_turnover = (calc_df['rev'] / calc_df['assets']).fillna(0)
         equity_multiplier = (calc_df['assets'] / calc_df['equity']).fillna(0)
 
-        # --- UI 展示 ---
-        st.title(f"🏛️ 财务全图谱 V69.4：{ticker}")
+        # --- 新增：智能打分系统 ---
+        score = 0
+        l_roe = roe.iloc[-1]
+        l_cq = (ocf.iloc[-1] / ni.iloc[-1]) if ni.iloc[-1] != 0 else 0
+        l_debt = debt_ratio.iloc[-1]
+        l_growth = growth.iloc[-1]
+
+        if l_roe > 15: score += 2.5
+        if l_cq > 1: score += 2.5
+        if l_debt < 50: score += 2.5
+        if l_growth > 10: score += 2.5
+
+        # --- 头部总结展示 ---
+        st.title(f"🏛️ 财务审计图谱 V69.5：{ticker}")
+        
+        col_score, col_diag = st.columns([1, 2])
+        with col_score:
+            color = "#2E7D32" if score >= 7.5 else "#FFA000" if score >= 5 else "#D32F2F"
+            st.markdown(f'''<div style="text-align:center; border:5px solid {color}; border-radius:15px; padding:20px;">
+                <h1 style="font-size:80px; color:{color}; margin:0;">{score:g}</h1>
+                <p style="color:{color}; font-size:20px; font-weight:bold;">综合健康评分 (满分10)</p></div>''', unsafe_allow_html=True)
+        
+        with col_diag:
+            st.subheader("📝 核心诊断总结")
+            st.write(f"**1. 盈利能力**：最新 ROE 为 **{l_roe:.2f}%**，{'回报优秀' if l_roe > 15 else '回报率一般'}。")
+            st.write(f"**2. 现金含金量**：经营现金流/净利润为 **{l_cq:.2f}**，{'现金转化极强' if l_cq > 1 else '需警惕利润成色'}。")
+            st.write(f"**3. 财务杠杆**：资产负债率为 **{l_debt:.1f}%**，{'负债结构稳健' if l_debt < 50 else '负债率偏高'}。")
+            st.write(f"**4. 成长动能**：营收增速为 **{l_growth:.1f}%**，{'处于扩张期' if l_growth > 10 else '增速放缓'}。")
+        
         st.divider()
 
         # 1. 营收规模
@@ -92,7 +118,7 @@ def run_v69_engine(ticker, is_annual):
         f1.add_trace(go.Scatter(x=years, y=growth, name="增速%", line=dict(color='red')), secondary_y=True)
         st.plotly_chart(f1, use_container_width=True)
 
-        # 2. ROE 深度拆解 (3图并列)
+        # 2. ROE 深度拆解 (三图并列)
         st.header("2️⃣ 核心回报：ROE 杜邦三因子拆解")
         rc1, rc2, rc3 = st.columns(3)
         with rc1:
@@ -119,7 +145,7 @@ def run_v69_engine(ticker, is_annual):
         f4.add_trace(go.Bar(x=years, y=div, name="现金分红", opacity=0.5))
         f4.update_layout(barmode='group'); st.plotly_chart(f4, use_container_width=True)
 
-        # 5. 财务安全性评估 (重磅修改：三图并列)
+        # 5. 财务安全性评估 (三图并列)
         st.header("5️⃣ 财务安全性评估 (杠杆 / 流动性 / 偿债)")
         sc1, sc2, sc3 = st.columns(3)
         with sc1:
@@ -135,5 +161,5 @@ def run_v69_engine(ticker, is_annual):
     except Exception as e:
         st.error(f"分析引擎发生错误: {e}")
 
-if st.sidebar.button("启动诊断"):
+if st.sidebar.button("启动全量诊断"):
     run_v69_engine(symbol, time_frame == "年度趋势 (Annual)")
